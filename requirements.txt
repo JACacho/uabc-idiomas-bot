@@ -1,0 +1,6 @@
+streamlit
+google-genai
+edge-tts
+duckduckgo-search
+pypdf
+requests
