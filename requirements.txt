@@ -1,3 +1,4 @@
+gradio
 streamlit
 google-genai
 edge-tts
