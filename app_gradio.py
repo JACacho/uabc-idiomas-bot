@@ -38,8 +38,7 @@ except Exception:
     pass
 
 def limpiar_tags(texto):
-    limpio = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto or "").strip()
-    return limpio
+    return re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto or "").strip()
 
 def github_subir(ruta_repo, contenido_bytes):
     if not GH_TOKEN or not GH_REPO:
@@ -220,7 +219,7 @@ def borrar_doc(nombre):
         return f"🗑️ {nombre} eliminado (también del respaldo)."
     return "No encontrado."
 
-with gr.Blocks(title="UABCBot Idiomas UABC", theme=gr.themes.Soft(), css=CSS) as demo:
+with gr.Blocks(title="UABCBot Idiomas UABC") as demo:
     estado_admin = gr.State({"pending": False, "active": False})
     if os.path.exists(LOGO):
         with gr.Row():
@@ -232,7 +231,7 @@ with gr.Blocks(title="UABCBot Idiomas UABC", theme=gr.themes.Soft(), css=CSS) as
         chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa", type="messages")
     except TypeError:
         chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa")
-    audio_out = gr.Audio(label="🔊 Respuesta de voz", type="filepath", show_download_button=True)
+    audio_out = gr.Audio(label="🔊 Respuesta de voz", type="filepath")
     with gr.Row():
         q1 = gr.Button("💳 Créditos para titularme", size="sm")
         q2 = gr.Button("📅 Horarios del CEC", size="sm")
@@ -260,23 +259,4 @@ with gr.Blocks(title="UABCBot Idiomas UABC", theme=gr.themes.Soft(), css=CSS) as
             nombre_borrar = gr.Textbox(label="Nombre del documento a borrar")
             btn_borrar = gr.Button("🗑️ Borrar")
             btn_subir.click(subir_doc, [archivo, cat, vig, chk], estado).then(listar_docs, None, lista).then(leer_contador, None, contador_txt)
-            btn_listar.click(listar_docs, None, lista).then(leer_contador, None, contador_txt)
-            btn_borrar.click(borrar_doc, nombre_borrar, estado).then(listar_docs, None, lista).then(leer_contador, None, contador_txt)
-
-        def desbloquear(clave):
-            if clave == CLAVE_ADMIN:
-                return gr.Column(visible=True)
-            return gr.Column(visible=False)
-
-        btn_clave.click(desbloquear, clave_in, zona_admin)
-
-    btn_txt.click(router, [txt, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    txt.submit(router, [txt, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    voz.stop_recording(procesar_voz, [voz, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    q1.click(rapida("¿Cuántos créditos necesito para titularme en Traducción?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    q2.click(rapida("¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    q3.click(rapida("¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    q4.click(rapida("¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    btn_nuevo.click(limpiar_chat, None, [chatbot, audio_out, estado_admin])
-
-demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
+            btn
