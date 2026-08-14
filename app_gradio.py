@@ -20,9 +20,9 @@ LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://codeberg.org/uabc-bot/uabc-idiomas-bot/raw/main/logo.png"
 
 CSS = """
-.gradio-container { max-width: 980px !important; }
+.gradio-container { max-width: 720px !important; }
 footer { display: none !important; }
-#chat-wa { background: #ece5dd; border-radius: 16px; padding: 10px; }
+#chat-wa { background: #ece5dd; border-radius: 14px; padding: 8px; }
 """
 
 try:
@@ -81,6 +81,15 @@ def leer_contador():
     except Exception:
         return "0"
 
+def guardar_aviso(texto, categoria="Avisos"):
+    os.makedirs(CARPETA, exist_ok=True)
+    nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + categoria + ".txt"
+    cab = f"=== {categoria} | Subido: {datetime.now().strftime('%d/%m/%Y')} | Vigente hasta: sin límite ===\n"
+    contenido = cab + texto
+    with open(os.path.join(CARPETA, nuevo), "w", encoding="utf-8") as f:
+        f.write(contenido)
+    return nuevo, github_subir(f"datos_bot/{nuevo}", contenido.encode("utf-8"))
+
 def transcribir_voz(data):
     if cliente_gemini:
         for modelo in ("gemini-2.5-flash", "gemini-2.0-flash"):
@@ -104,41 +113,67 @@ def transcribir_voz(data):
 def construir_historial(historial):
     msgs = []
     for m in historial[-MEMORIA:]:
-        rol = "user" if m["role"] == "user" else "assistant"
-        msgs.append({"role": rol, "content": m["content"]})
+        if isinstance(m, dict) and isinstance(m.get("content"), str):
+            msgs.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
     return msgs
 
-def procesar_texto(pregunta, historial):
-    sumar_pregunta()
-    historial = historial or []
-    contexto = construir_historial(historial)
-    try:
-        respuesta, lang = responder(pregunta, contexto)
-    except Exception:
-        respuesta, lang = responder(pregunta, [])
-    respuesta = limpiar_tags(respuesta)
-    ruta_voz = asyncio.run(generar_voz(respuesta, lang))
-    historial.append({"role": "user", "content": pregunta})
+def decir(historial, pregunta, respuesta):
+    ruta_voz = asyncio.run(generar_voz(respuesta, "es"))
+    if pregunta:
+        historial.append({"role": "user", "content": pregunta})
     historial.append({"role": "assistant", "content": respuesta})
     return historial, ruta_voz
 
-def procesar_voz(audio_path, historial):
+def router(pregunta, historial, state):
+    historial = historial or []
+    state = state or {"pending": False, "active": False}
+    texto = (pregunta or "").strip()
+    if not texto:
+        return historial, None, state
+    if texto == "__ADMIN__":
+        state["pending"] = True
+        return decir(historial, "👨‍ Administración", "🔐 Escribe la clave de administración para continuar.") + (state,)
+    if state.get("pending"):
+        state["pending"] = False
+        if texto == CLAVE_ADMIN:
+            state["active"] = True
+            return decir(historial, "••••••", "✅ Acceso concedido, profe. Escribe tu aviso tal cual (ej. 'AVISO: se suspenden clases el viernes por calor') y lo publico al instante. Escribe SALIR para cerrar.") + (state,)
+        return decir(historial, "••••••", "❌ Clave incorrecta.") + (state,)
+    if state.get("active"):
+        if texto.upper() == "SALIR":
+            state["active"] = False
+            return decir(historial, texto, "🔒 Sesión de administración cerrada. Vuelvo a modo aspirante.") + (state,)
+        nuevo, resp = guardar_aviso(texto)
+        return decir(historial, texto, f"✅ Publicado y aprendido al instante. {resp} Los alumnos ya pueden preguntármelo.") + (state,)
+    sumar_pregunta()
+    contexto = construir_historial(historial)
+    try:
+        respuesta, lang = responder(texto, contexto)
+    except Exception:
+        respuesta, lang = responder(texto, [])
+    respuesta = limpiar_tags(respuesta)
+    ruta_voz = asyncio.run(generar_voz(respuesta, lang))
+    historial.append({"role": "user", "content": texto})
+    historial.append({"role": "assistant", "content": respuesta})
+    return historial, ruta_voz, state
+
+def procesar_voz(audio_path, historial, state):
     if not audio_path:
-        return historial, None
+        return historial, None, state
     with open(audio_path, "rb") as f:
         data = f.read()
     texto = transcribir_voz(data)
     if not texto:
-        return historial, None
-    return procesar_texto(texto, historial)
+        return historial, None, state
+    return router(texto, historial, state)
 
 def rapida(texto):
-    def fn(hist):
-        return procesar_texto(texto, hist)
+    def fn(hist, state):
+        return router(texto, hist, state)
     return fn
 
 def limpiar_chat():
-    return [], None
+    return [], None, {"pending": False, "active": False}
 
 def extraer_texto(ruta, nombre):
     if nombre.lower().endswith(".pdf"):
@@ -182,71 +217,64 @@ def borrar_doc(nombre):
     return "No encontrado."
 
 with gr.Blocks(title="UABCBot Idiomas UABC", theme=gr.themes.Soft(), css=CSS) as demo:
+    estado_admin = gr.State({"pending": False, "active": False})
     if os.path.exists(LOGO):
         with gr.Row():
-            gr.Image(value=LOGO, width=140, interactive=False, show_label=False, scale=1)
-            gr.Markdown("# 🎓 Asistente Virtual - Facultad de Idiomas UABC\n\nEscríbeme o háblame en español, inglés o francés.", scale=4)
+            gr.Image(value=LOGO, width=90, interactive=False, show_label=False, scale=1)
+            gr.Markdown("### 🎓 UABCBot Idiomas — Facultad de Idiomas UABC\nEscríbeme o háblame en español, inglés o francés.", scale=5)
     else:
-        gr.Markdown("# 🎓 Asistente Virtual - Facultad de Idiomas UABC")
-        gr.Markdown("Escríbeme o háblame en español, inglés o francés.")
-    with gr.Tabs():
-        with gr.Tab("💬 Chat"):
-            try:
-                chatbot = gr.Chatbot(height=480, elem_id="chat-wa", type="messages")
-            except TypeError:
-                chatbot = gr.Chatbot(height=480, elem_id="chat-wa")
-            with gr.Row():
-                q1 = gr.Button("💳 Créditos para titularme", size="sm")
-                q2 = gr.Button("📅 Horarios del CEC", size="sm")
-                q3 = gr.Button("🎓 Requisitos de admisión", size="sm")
-                q4 = gr.Button("🏛️ Carreras y TSU", size="sm")
-                btn_nuevo = gr.Button("🧹 Nueva conversación", size="sm")
-            with gr.Row():
-                txt = gr.Textbox(placeholder="Escribe tu mensaje… (Enter envía)", show_label=False, scale=5)
-                btn_txt = gr.Button("Enviar ➤", variant="primary", scale=1)
-            with gr.Accordion("🎤 Responder con voz (se envía sola al terminar)", open=False):
-                voz = gr.Audio(sources=["microphone"], type="filepath", label="Graba tu pregunta")
-            audio_out = gr.Audio(label="🔊 Respuesta en audio", type="filepath")
+        gr.Markdown("### 🎓 UABCBot Idiomas — Facultad de Idiomas UABC")
+    try:
+        chatbot = gr.Chatbot(height=460, elem_id="chat-wa", type="messages")
+    except TypeError:
+        chatbot = gr.Chatbot(height=460, elem_id="chat-wa")
+    audio_out = gr.Audio(label="🔊 Respuesta de voz", type="filepath", show_download_button=True)
+    with gr.Row():
+        q1 = gr.Button("💳 Créditos", size="sm")
+        q2 = gr.Button("📅 Horarios CEC", size="sm")
+        q3 = gr.Button("🎓 Admisión", size="sm")
+        q4 = gr.Button("🏛️ Carreras y TSU", size="sm")
+    with gr.Row():
+        q5 = gr.Button("👨‍ Administración", size="sm")
+        btn_nuevo = gr.Button("🧹 Nueva conversación", size="sm")
+    with gr.Row():
+        voz = gr.Audio(sources=["microphone"], type="filepath", show_label=False, scale=1)
+        txt = gr.Textbox(placeholder="Escribe tu mensaje…", show_label=False, scale=5)
+        btn_txt = gr.Button("➤", variant="primary", scale=1)
+    with gr.Accordion("🛠️ Panel de archivos (personal autorizado)", open=False):
+        clave_in = gr.Textbox(label="Clave de acceso", type="password")
+        btn_clave = gr.Button("🔓 Entrar")
+        with gr.Column(visible=False) as zona_admin:
+            archivo = gr.File(label="Documento (TXT o PDF)")
+            cat = gr.Dropdown(["Horarios", "Exámenes", "Convocatorias", "Eventos", "Avisos"], value="Avisos", label="Categoría")
+            vig = gr.Textbox(label="Vigente hasta (dd/mm/aaaa)")
+            chk = gr.Checkbox(value=True, label="🔄 Reemplazar anteriores de esta categoría")
+            btn_subir = gr.Button("📤 Subir y enseñar al bot")
+            estado = gr.Textbox(label="Estado")
+            lista = gr.Textbox(label="Documentos que el bot conoce", lines=4)
+            contador_txt = gr.Textbox(label="📊 Preguntas atendidas")
+            btn_listar = gr.Button("🔄 Actualizar lista")
+            nombre_borrar = gr.Textbox(label="Nombre del documento a borrar")
+            btn_borrar = gr.Button("🗑️ Borrar")
+            btn_subir.click(subir_doc, [archivo, cat, vig, chk], estado).then(listar_docs, None, lista).then(leer_contador, None, contador_txt)
+            btn_listar.click(listar_docs, None, lista).then(leer_contador, None, contador_txt)
+            btn_borrar.click(borrar_doc, nombre_borrar, estado).then(listar_docs, None, lista).then(leer_contador, None, contador_txt)
 
-            def enviar_texto(pregunta, hist):
-                if not pregunta:
-                    return hist, None
-                return procesar_texto(pregunta, hist)
+        def desbloquear(clave):
+            if clave == CLAVE_ADMIN:
+                return gr.Column(visible=True)
+            return gr.Column(visible=False)
 
-            btn_txt.click(enviar_texto, [txt, chatbot], [chatbot, audio_out])
-            txt.submit(enviar_texto, [txt, chatbot], [chatbot, audio_out])
-            voz.stop_recording(procesar_voz, [voz, chatbot], [chatbot, audio_out])
-            q1.click(rapida("¿Cuántos créditos necesito para titularme en Traducción?"), [chatbot], [chatbot, audio_out])
-            q2.click(rapida("¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?"), [chatbot], [chatbot, audio_out])
-            q3.click(rapida("¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"), [chatbot], [chatbot, audio_out])
-            q4.click(rapida("¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"), [chatbot], [chatbot, audio_out])
-            btn_nuevo.click(limpiar_chat, None, [chatbot, audio_out])
-        with gr.Tab("👨‍ Administración"):
-            clave_in = gr.Textbox(label="Clave de acceso", type="password", placeholder="Escribe la clave")
-            btn_clave = gr.Button("🔓 Entrar")
-            estado_clave = gr.Markdown("Solo el personal con clave puede subir o borrar documentos. Todo se respalda solo en GitHub.")
-            with gr.Column(visible=False) as zona_admin:
-                gr.Markdown("Sube horarios, convocatorias o avisos: quedan **en vivo al instante** y **permanentes** en el respaldo.")
-                archivo = gr.File(label="Documento (TXT o PDF)")
-                cat = gr.Dropdown(["Horarios", "Exámenes", "Convocatorias", "Eventos", "Avisos"], value="Avisos", label="Categoría")
-                vig = gr.Textbox(label="Vigente hasta (dd/mm/aaaa)", placeholder="28/11/2026")
-                chk = gr.Checkbox(value=True, label="🔄 Reemplazar documentos anteriores de esta categoría (para que solo valga la info nueva)")
-                btn_subir = gr.Button("📤 Subir y enseñar al bot")
-                estado = gr.Textbox(label="Estado")
-                lista = gr.Textbox(label="Documentos que el bot conoce", lines=6)
-                contador_txt = gr.Textbox(label="📊 Preguntas atendidas")
-                btn_listar = gr.Button("🔄 Actualizar lista")
-                nombre_borrar = gr.Textbox(label="Nombre del documento a borrar")
-                btn_borrar = gr.Button("🗑️ Borrar")
-                btn_subir.click(subir_doc, [archivo, cat, vig, chk], estado).then(listar_docs, None, lista).then(leer_contador, None, contador_txt)
-                btn_listar.click(listar_docs, None, lista).then(leer_contador, None, contador_txt)
-                btn_borrar.click(borrar_doc, nombre_borrar, estado).then(listar_docs, None, lista).then(leer_contador, None, contador_txt)
+        btn_clave.click(desbloquear, clave_in, zona_admin)
 
-            def desbloquear(clave):
-                if clave == CLAVE_ADMIN:
-                    return gr.Column(visible=True), "✅ Acceso concedido. Ya puedes gestionar documentos."
-                return gr.Column(visible=False), "❌ Clave incorrecta."
-
-            btn_clave.click(desbloquear, clave_in, [zona_admin, estado_clave])
+    btn_txt.click(router, [txt, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    txt.submit(router, [txt, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    voz.stop_recording(procesar_voz, [voz, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    q1.click(rapida("¿Cuántos créditos necesito para titularme en Traducción?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    q2.click(rapida("¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    q3.click(rapida("¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    q4.click(rapida("¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    q5.click(rapida("__ADMIN__"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    btn_nuevo.click(limpiar_chat, None, [chatbot, audio_out, estado_admin])
 
 demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
