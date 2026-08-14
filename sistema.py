@@ -1,78 +1,138 @@
-import os, re, tempfile
-import edge_tts
-from config import generar, busqueda_web, VOCES
+import os
+import re
+import asyncio
+import tempfile
+import requests
+from google.genai import types
 
-SYSTEM = """Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas Mexicali de la UABC y del Centro de Educación Continua (CEC).
-Hoy es {fecha}. Usa esta fecha para decir si un periodo del calendario está en curso, próximo o concluido.
+try:
+    from config import client as cliente_gemini
+except Exception:
+    cliente_gemini = None
 
-CONTEXTO OFICIAL BASE:
-{contexto_base}
+BASE = os.path.dirname(os.path.abspath(__file__))
+MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
+CARPETA = os.path.join(BASE, "datos_bot")
 
-INFORMACIÓN ADICIONAL RECIENTE (prioriza esta si coincide con la pregunta):
-{contexto_adicional}
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-REGLAS:
-1. Inicia SIEMPRE tu respuesta con la etiqueta [LANG: xx], donde xx es el idioma de la pregunta (es, en, fr, pt). Después responde EN ESE MISMO IDIOMA.
-2. Si la INFORMACIÓN ADICIONAL responde la pregunta, úsala como fuente principal (es la más reciente).
-3. Tono amable, claro y motivador; tu público son aspirantes de preparatoria y público general.
-4. Si la respuesta NO está en ningún contexto, responde ÚNICAMENTE con el texto [NEEDS_WEB].
-5. Si te incluyen RESULTADOS WEB, úsalos y cita la fuente al final con su liga.
-6. Nunca inventes fechas ni datos.
-7. Si no tienes respuesta confiable, da el contacto oficial (Tel: +52 686.689.0825, idiomas.mxl.uabc.mx) e invita a reformular.
-8. Tu respuesta será leída por una voz: NO uses Markdown, negritas, viñetas, emojis ni listas; escribe en párrafos fluidos."""
+VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-DeniseNeural"}
 
-def limpiar_respuesta(texto):
-    m = re.search(r"\[LANG:\s*([a-z]{2})\]", texto, re.I)
-    lang = m.group(1).lower() if m else "es"
-    limpio = re.sub(r"\[LANG:\s*[a-z]{2}\]", "", texto, flags=re.I).strip()
-    limpio = re.sub(r"https?://\S+", "", limpio)
-    limpio = re.sub(r"\*\*(.*?)\*\*", r"\1", limpio)
-    limpio = re.sub(r"#+\s*", "", limpio)
-    limpio = re.sub(r"^[\*\-\+]\s*", "", limpio, flags=re.MULTILINE)
-    limpio = re.sub("[\U0001F300-\U0001FAFF☀-➿]", "", limpio)
-    limpio = re.sub(r"\n{2,}", " ", limpio)
-    return limpio.strip(), lang
+def detectar_idioma(texto):
+    t = (texto or "").lower()
+    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits"]
+    en = ["hello", "thank", "how many", "credits", "degree", "translation", "what", "when", "where", "i want"]
+    hf = sum(1 for w in fr if w in t)
+    he = sum(1 for w in en if w in t)
+    if hf >= 2 and hf > he:
+        return "fr"
+    if he >= 2 and he > hf:
+        return "en"
+    return "es"
 
-def obtener_contexto():
-    dir_base = os.path.dirname(os.path.abspath(__file__))
-    ruta_manual = os.path.join(dir_base, "Manual_Aspirantes_Idiomas_UABC.txt")
-    with open(ruta_manual, encoding="utf-8") as f:
-        base = f.read()
-    extra = ""
-    datos = os.path.join(dir_base, "datos_bot")
-    if os.path.isdir(datos):
-        for fn in sorted(os.listdir(datos)):
+def cargar_contexto():
+    partes = []
+    try:
+        with open(MANUAL, encoding="utf-8", errors="ignore") as f:
+            partes.append(f.read())
+    except Exception:
+        pass
+    if os.path.isdir(CARPETA):
+        for fn in sorted(os.listdir(CARPETA)):
             if fn.endswith(".txt"):
-                with open(os.path.join(datos, fn), encoding="utf-8") as f:
-                    extra += f.read() + "\n\n"
-    return base, extra or "Sin información adicional por ahora."
+                try:
+                    with open(os.path.join(CARPETA, fn), encoding="utf-8", errors="ignore") as f:
+                        partes.append(f.read())
+                except Exception:
+                    pass
+    return "\n\n".join(partes)[:18000]
+
+def sistema_prompt(contexto):
+    return (
+        "Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC (Mexicali). "
+        "Responde con amabilidad y en el idioma de la pregunta (español, inglés o francés), usando SOLO el CONTEXTO. "
+        "No inventes datos. No escripas etiquetas ni corchetes al inicio de la respuesta. "
+        "Si la información no está en el CONTEXTO, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
+        f"\n=== CONTEXTO ===\n{contexto}"
+    )
+
+def llamar_gemini(sp, hist, pregunta):
+    if not cliente_gemini:
+        return None
+    try:
+        contents = []
+        for m in hist:
+            contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
+        contents.append({"role": "user", "parts": [{"text": pregunta}]})
+        r = cliente_gemini.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(system_instruction=sp),
+        )
+        return (r.text or "").strip() or None
+    except Exception:
+        return None
+
+def llamar_openai(sp, hist, pregunta, url, key, modelo):
+    if not key:
+        return None
+    try:
+        msgs = [{"role": "system", "content": sp}] + hist + [{"role": "user", "content": pregunta}]
+        r = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": modelo, "messages": msgs},
+            timeout=60,
+        )
+        d = r.json()
+        return (d["choices"][0]["message"]["content"] or "").strip() or None
+    except Exception:
+        return None
 
 def responder(pregunta, historial):
-    from datetime import date
-    base, extra = obtener_contexto()
-    sys = SYSTEM.format(fecha=date.today().strftime("%d/%m/%Y"),
-                        contexto_base=base, contexto_adicional=extra)
-    contents = historial + [{"role": "user", "parts": [{"text": pregunta}]}]
-    r = generar(contents, sys)
-    texto = r.text
-    if "[NEEDS_WEB]" in texto:
-        web = busqueda_web(pregunta)
-        r = generar(contents, sys + "\n\nRESULTADOS WEB OFICIALES:\n" + web)
-        texto = r.text
-    return limpiar_respuesta(texto)
+    contexto = cargar_contexto()
+    sp = sistema_prompt(contexto)
+    hist = []
+    for m in (historial or []):
+        if isinstance(m, dict) and isinstance(m.get("content"), str):
+            hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
+    texto = llamar_gemini(sp, hist, pregunta)
+    if not texto:
+        texto = llamar_openai(sp, hist, pregunta, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, "llama-3.3-70b-versatile")
+    if not texto:
+        texto = llamar_openai(sp, hist, pregunta, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, "meta-llama/llama-3.3-70b-instruct:free")
+    if not texto:
+        texto = "⚠️ No pude generar una respuesta en este momento. Intenta de nuevo en unos segundos."
+    texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
+    return texto, detectar_idioma(pregunta)
 
 def transcribir(audio_bytes):
-    from google.genai import types
-    for mime in ("audio/webm", "audio/wav", "audio/mp3"):
-        try:
-            r = generar([types.Part.from_bytes(data=audio_bytes, mime_type=mime),
-                         "Escucha este audio. Responde con [LANG: xx] del idioma hablado y en la siguiente línea la transcripción exacta."])
-            return limpiar_respuesta(r.text)
-        except Exception:
-            continue
-    return None, "es"
+    if cliente_gemini:
+        for modelo in ("gemini-2.5-flash", "gemini-2.0-flash"):
+            for mime in ("audio/webm", "audio/wav", "audio/mp3", "audio/ogg"):
+                try:
+                    r = cliente_gemini.models.generate_content(
+                        model=modelo,
+                        contents=[
+                            types.Part(inline_data=types.Blob(data=audio_bytes, mime_type=mime)),
+                            "Transcribe textualmente este audio (español, inglés o francés). Devuelve solo la transcripción.",
+                        ],
+                    )
+                    t = (r.text or "").strip()
+                    if t:
+                        return t, detectar_idioma(t)
+                except Exception:
+                    continue
+    return "", "es"
 
 async def generar_voz(texto, lang):
-    ruta = tempfile.mktemp(suffix=".mp3")
-    await edge_tts.Communicate(texto, VOCES.get(lang, VOCES["es"])).save(ruta)
-    return ruta
+    try:
+        import edge_tts
+        voz = VOCES.get(lang, VOCES["es"])
+        ruta = os.path.join(tempfile.gettempdir(), "respuesta_uabc.mp3")
+        c = edge_tts.Communicate(texto, voz)
+        await c.save(ruta)
+        return ruta
+    except Exception:
+        return None
