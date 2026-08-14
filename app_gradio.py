@@ -6,8 +6,6 @@ import requests
 import gradio as gr
 from datetime import datetime
 from sistema import responder, transcribir, generar_voz
-from config import client as cliente_gemini
-from google.genai import types
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 CARPETA = os.path.join(BASE, "datos_bot")
@@ -93,26 +91,6 @@ def guardar_aviso(texto, categoria="Avisos"):
         f.write(contenido)
     return nuevo, github_subir(f"datos_bot/{nuevo}", contenido.encode("utf-8"))
 
-def transcribir_voz(data):
-    if cliente_gemini:
-        for modelo in ("gemini-2.5-flash", "gemini-2.0-flash"):
-            for mime in ("audio/webm", "audio/wav", "audio/mp3", "audio/ogg"):
-                try:
-                    r = cliente_gemini.models.generate_content(
-                        model=modelo,
-                        contents=[
-                            types.Part(inline_data=types.Blob(data=data, mime_type=mime)),
-                            "Transcribe textualmente lo que se dice en este audio. El idioma puede ser español, inglés o francés. Devuelve únicamente la transcripción, sin comentarios.",
-                        ],
-                    )
-                    texto = (r.text or "").strip()
-                    if texto:
-                        return texto
-                except Exception:
-                    continue
-    texto, _ = transcribir(data)
-    return texto
-
 def construir_historial(historial):
     msgs = []
     for m in historial[-MEMORIA:]:
@@ -165,7 +143,7 @@ def procesar_voz(audio_path, historial, state):
         return historial, None, state
     with open(audio_path, "rb") as f:
         data = f.read()
-    texto = transcribir_voz(data)
+    texto, _ = transcribir(data)
     if not texto:
         return historial, None, state
     return router(texto, historial, state)
@@ -231,7 +209,7 @@ with gr.Blocks(title="UABCBot Idiomas UABC") as demo:
         chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa", type="messages")
     except TypeError:
         chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa")
-    audio_out = gr.Audio(label="🔊 Respuesta de voz", type="filepath")
+    audio_out = gr.Audio(label="🔊 Nota de voz de la respuesta (toca play aquí)", type="filepath")
     with gr.Row():
         q1 = gr.Button("💳 Créditos para titularme", size="sm")
         q2 = gr.Button("📅 Horarios del CEC", size="sm")
@@ -240,15 +218,15 @@ with gr.Blocks(title="UABCBot Idiomas UABC") as demo:
         q4 = gr.Button("🏛️ Carreras y TSU", size="sm")
         btn_nuevo = gr.Button("🧹 Nueva conversación", size="sm")
     with gr.Row():
-        txt = gr.Textbox(placeholder="Escribe o dime tu pregunta…", show_label=False, scale=5)
+        txt = gr.Textbox(label="✏️ Escribe o dime tu pregunta", placeholder="Escribe o dime tu pregunta…", scale=5)
         voz = gr.Audio(sources=["microphone"], type="filepath", show_label=False, scale=1)
-        btn_txt = gr.Button("➤", variant="primary", scale=1)
+        btn_txt = gr.Button("Enviar ➤", variant="primary", scale=1)
     with gr.Accordion("🛠️ Panel de archivos (personal autorizado)", open=False):
         clave_in = gr.Textbox(label="Clave de acceso", type="password")
         btn_clave = gr.Button("🔓 Entrar")
         with gr.Column(visible=False) as zona_admin:
             archivo = gr.File(label="Documento (TXT o PDF)")
-            cat = gr.Dropdown(["Horarios", "Exámenes", "Convocatorias", "Eventos", "Avisos"], value="Avisos", label="Categoría")
+            cat = gr.Dropdown(["Horarios", "Exámenes", "Convocatorias", "Eventos", "Avisos", "TSU"], value="Avisos", label="Categoría")
             vig = gr.Textbox(label="Vigente hasta (dd/mm/aaaa)")
             chk = gr.Checkbox(value=True, label="🔄 Reemplazar anteriores de esta categoría")
             btn_subir = gr.Button("📤 Subir y enseñar al bot")
