@@ -22,8 +22,11 @@ LOGO_URL = "https://codeberg.org/uabc-bot/uabc-idiomas-bot/raw/main/logo.png"
 CSS = """
 .gradio-container { max-width: 720px !important; }
 footer { display: none !important; }
+.gr-row { align-items: center !important; }
 #chat-wa { background: #ece5dd; border-radius: 14px; padding: 8px; }
 """
+
+BIENVENIDA = [{"role": "assistant", "content": "👋 ¡Hola! Soy *UABCBot Idiomas*, el asistente de la Facultad de Idiomas UABC. Toca una opción abajo o escribe/dime tu pregunta en español, inglés o francés. (Personal docente: escribe o di *administración*)."}]
 
 try:
     if not os.path.exists(LOGO):
@@ -35,7 +38,8 @@ except Exception:
     pass
 
 def limpiar_tags(texto):
-    return re.sub(r"^\s*\[(ES|EN|FR)\]\s*", "", texto or "").strip()
+    limpio = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto or "").strip()
+    return limpio
 
 def github_subir(ruta_repo, contenido_bytes):
     if not GH_TOKEN or not GH_REPO:
@@ -130,9 +134,6 @@ def router(pregunta, historial, state):
     texto = (pregunta or "").strip()
     if not texto:
         return historial, None, state
-    if texto == "__ADMIN__":
-        state["pending"] = True
-        return decir(historial, "👨‍ Administración", "🔐 Escribe la clave de administración para continuar.") + (state,)
     if state.get("pending"):
         state["pending"] = False
         if texto == CLAVE_ADMIN:
@@ -145,6 +146,9 @@ def router(pregunta, historial, state):
             return decir(historial, texto, "🔒 Sesión de administración cerrada. Vuelvo a modo aspirante.") + (state,)
         nuevo, resp = guardar_aviso(texto)
         return decir(historial, texto, f"✅ Publicado y aprendido al instante. {resp} Los alumnos ya pueden preguntármelo.") + (state,)
+    if "administraci" in texto.lower():
+        state["pending"] = True
+        return decir(historial, texto, "🔐 Para entrar al modo de administración, escribe la clave de acceso.") + (state,)
     sumar_pregunta()
     contexto = construir_historial(historial)
     try:
@@ -220,26 +224,25 @@ with gr.Blocks(title="UABCBot Idiomas UABC", theme=gr.themes.Soft(), css=CSS) as
     estado_admin = gr.State({"pending": False, "active": False})
     if os.path.exists(LOGO):
         with gr.Row():
-            gr.Image(value=LOGO, width=90, interactive=False, show_label=False, scale=1)
+            gr.Image(value=LOGO, width=110, interactive=False, show_label=False, scale=1)
             gr.Markdown("### 🎓 UABCBot Idiomas — Facultad de Idiomas UABC\nEscríbeme o háblame en español, inglés o francés.", scale=5)
     else:
         gr.Markdown("### 🎓 UABCBot Idiomas — Facultad de Idiomas UABC")
     try:
-        chatbot = gr.Chatbot(height=460, elem_id="chat-wa", type="messages")
+        chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa", type="messages")
     except TypeError:
-        chatbot = gr.Chatbot(height=460, elem_id="chat-wa")
+        chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa")
     audio_out = gr.Audio(label="🔊 Respuesta de voz", type="filepath", show_download_button=True)
     with gr.Row():
-        q1 = gr.Button("💳 Créditos", size="sm")
-        q2 = gr.Button("📅 Horarios CEC", size="sm")
-        q3 = gr.Button("🎓 Admisión", size="sm")
-        q4 = gr.Button("🏛️ Carreras y TSU", size="sm")
+        q1 = gr.Button("💳 Créditos para titularme", size="sm")
+        q2 = gr.Button("📅 Horarios del CEC", size="sm")
+        q3 = gr.Button("🎓 Requisitos de admisión", size="sm")
     with gr.Row():
-        q5 = gr.Button("👨‍ Administración", size="sm")
+        q4 = gr.Button("🏛️ Carreras y TSU", size="sm")
         btn_nuevo = gr.Button("🧹 Nueva conversación", size="sm")
     with gr.Row():
+        txt = gr.Textbox(placeholder="Escribe o dime tu pregunta…", show_label=False, scale=5)
         voz = gr.Audio(sources=["microphone"], type="filepath", show_label=False, scale=1)
-        txt = gr.Textbox(placeholder="Escribe tu mensaje…", show_label=False, scale=5)
         btn_txt = gr.Button("➤", variant="primary", scale=1)
     with gr.Accordion("🛠️ Panel de archivos (personal autorizado)", open=False):
         clave_in = gr.Textbox(label="Clave de acceso", type="password")
@@ -274,7 +277,6 @@ with gr.Blocks(title="UABCBot Idiomas UABC", theme=gr.themes.Soft(), css=CSS) as
     q2.click(rapida("¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     q3.click(rapida("¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     q4.click(rapida("¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    q5.click(rapida("__ADMIN__"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     btn_nuevo.click(limpiar_chat, None, [chatbot, audio_out, estado_admin])
 
 demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
