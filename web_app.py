@@ -12,11 +12,13 @@ from collections import Counter
 from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
+import sistema as _sist
 from sistema import responder, transcribir, generar_voz
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 CARPETA = os.path.join(BASE, "datos_bot")
 AUDIOS = os.path.join(BASE, "audios")
+IMGS = os.path.join(BASE, "posters")
 CONVS = os.path.join(BASE, "conversaciones")
 CONTADOR = os.path.join(BASE, "conteo.txt")
 USO = os.path.join(BASE, "uso.jsonl")
@@ -27,7 +29,7 @@ GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO = os.environ.get("GITHUB_REPO", "")
 LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
-for d in (AUDIOS, CARPETA, CONVS):
+for d in (AUDIOS, CARPETA, CONVS, IMGS):
     os.makedirs(d, exist_ok=True)
 
 try:
@@ -47,6 +49,8 @@ FAQ = [
     (["admision", "requisito", "inscri"], "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"),
     (["carrera", "tsu", "tecnico", "técnico"], "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"),
 ]
+
+EXT_IMG = (".png", ".jpg", ".jpeg", ".webp")
 
 def _jload(p, d={}):
     try:
@@ -139,7 +143,7 @@ def router(msg, hist, state, lang_pref):
         state["pending"] = False
         if texto == CLAVE_ADMIN:
             state["active"] = True
-            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o usa el panel ⚙️ para documentos y notas de voz). Escribe SALIR para cerrar.", None, state
+            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o usa el panel ⚙️ para documentos, pósters y notas de voz). Escribe SALIR para cerrar.", None, state
         return "❌ Clave incorrecta.", None, state
     if state.get("active"):
         if texto.upper() == "SALIR":
@@ -272,11 +276,23 @@ async def topfaq():
 @app.post("/api/upload")
 async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("0")):
     nombre_orig = archivo.filename or "doc.txt"
-    tmp = os.path.join(BASE, "tmp_" + nombre_orig)
-    with open(tmp, "wb") as f:
-        f.write(await archivo.read())
-    texto = extraer_texto(tmp, nombre_orig)
-    os.remove(tmp)
+    ext = os.path.splitext(nombre_orig)[1].lower()
+    data = await archivo.read()
+    if ext in EXT_IMG:
+        mime = "image/png" if ext == ".png" else "image/jpeg"
+        texto = _sist.extraer_imagen(data, mime)
+        if not texto:
+            return {"estado": "⚠️ No pude leer el póster (el motor de visión está saturado). Intenta de nuevo en un minuto, o usa TXT/PDF."}
+        iname = str(uuid.uuid4()) + ext
+        with open(os.path.join(IMGS, iname), "wb") as f:
+            f.write(data)
+        texto = texto + f"\n🖼️ Póster original: /img/{iname}"
+    else:
+        tmp = os.path.join(BASE, "tmp_" + nombre_orig)
+        with open(tmp, "wb") as f:
+            f.write(data)
+        texto = extraer_texto(tmp, nombre_orig)
+        os.remove(tmp)
     if reemplazar == "1":
         for fn in list(os.listdir(CARPETA)):
             if fn.endswith(f"_{categoria}.txt"):
@@ -354,13 +370,17 @@ async def conv_get(id: str = ""):
 async def audio(nombre: str):
     return FileResponse(os.path.join(AUDIOS, nombre), media_type="audio/mpeg")
 
+@app.get("/img/{nombre}")
+async def img(nombre: str):
+    p = os.path.join(IMGS, nombre)
+    mt = "image/png" if nombre.endswith(".png") else "image/jpeg"
+    return FileResponse(p, media_type=mt)
+
 @app.get("/logo.png")
 async def logo():
     if os.path.exists(LOGO):
         return FileResponse(LOGO)
     return JSONResponse({})
-
-import sistema as _sist
 
 @app.get("/api/debug")
 async def api_debug():
@@ -424,6 +444,8 @@ PAGINA = """
   .drawer input, .drawer select { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
   .drawer button { margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #00684a; color: #fff; cursor: pointer; }
   .drawer .item { display: block; width: 100%; background: #f2f4f7; color: #222; margin: 4px 0; text-align: left; }
+  .xbtn { background: #d32f2f !important; float: right; }
+  #drop { border: 2px dashed #00855f; border-radius: 12px; padding: 14px; text-align: center; color: #00684a; background: #f2fbf6; margin: 6px 0; cursor: pointer; }
   #dlist { white-space: pre-wrap; background: #f7f9fa; border-radius: 8px; padding: 8px; margin-top: 6px; font-size: 12px; }
   @media (max-width: 900px) { #side { display: none; } #convs { display: block; } }
   @media (min-width: 900px) {
@@ -454,11 +476,11 @@ PAGINA = """
       <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
     </header>
     <button id="gear" title="Personal autorizado">⚙️</button>
-    <div id="cdrawer" class="drawer"><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
-    <div id="udrawer" class="drawer">
+    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
       <b>👤 Tu cuenta</b>
       <div id="who"></div>
-      <input id="uusr" placeholder="Usuario">
+      <input id="uusr" placeholder="Usuario o correo">
       <input id="ukey" type="password" placeholder="Clave">
       <button id="ureg">✨ Registrarme</button>
       <button id="ulin">🔑 Entrar</button>
@@ -466,7 +488,7 @@ PAGINA = """
       <button id="uout">🚪 Cerrar sesión</button>
     </div>
     <div id="chat"></div>
-    <div id="drawer" class="drawer">
+    <div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
       <b>🛠️ Panel de personal</b>
       <input id="clave" type="password" placeholder="Clave de acceso">
       <button id="unlock">🔓 Entrar</button>
@@ -476,8 +498,9 @@ PAGINA = """
           <option>Avisos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>Eventos</option><option>TSU</option><option>PlanDeEstudios</option>
         </select>
         <input id="fvig" type="date">
-        <input id="ffile" type="file">
-        <button id="fsubir">📤 Subir documento</button>
+        <div id="drop">📥 Arrastra aquí tu documento o póster (TXT, PDF o imagen)<br><small>o toca para elegirlo</small></div>
+        <input id="ffile" type="file" style="display:none">
+        <button id="fsubir">📤 Subir y enseñar al bot</button>
         <button id="nota">🎤 Grabar nota de voz</button>
         <button id="ldocs">🔄 Ver documentos</button>
         <button id="rep">📊 Reporte de uso</button>
@@ -495,7 +518,7 @@ PAGINA = """
   </main>
 </div>
 <script>
-let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid();
+let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null;
 let currentUser = localStorage.getItem('uabc_user') || "";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -607,6 +630,11 @@ document.getElementById('uout').onclick = () => { currentUser = ""; localStorage
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
   document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
 });
+const drop = document.getElementById('drop');
+drop.onclick = () => document.getElementById('ffile').click();
+drop.ondragover = e => e.preventDefault();
+drop.ondrop = e => { e.preventDefault(); if (e.dataTransfer.files[0]) { droppedFile = e.dataTransfer.files[0]; drop.innerHTML = '📎 ' + esc(droppedFile.name); } };
+document.getElementById('ffile').onchange = e => { droppedFile = e.target.files[0] || null; if (droppedFile) drop.innerHTML = '📎 ' + esc(droppedFile.name); };
 const mic = document.getElementById('mic');
 mic.onclick = async () => {
   if (rec && rec.state === 'recording') { rec.stop(); return; }
@@ -639,7 +667,8 @@ document.getElementById('unlock').onclick = async () => {
   if (!d.ok) alert('❌ Clave incorrecta');
 };
 document.getElementById('fsubir').onclick = async () => {
-  const f = document.getElementById('ffile').files[0]; if (!f) return alert('Selecciona un archivo');
+  const f = document.getElementById('ffile').files[0] || droppedFile;
+  if (!f) return alert('Selecciona o arrastra un archivo');
   const fd = new FormData();
   fd.append('archivo', f);
   fd.append('categoria', document.getElementById('fcat').value);
