@@ -18,7 +18,7 @@ CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "fimxl2026")
 GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO = os.environ.get("GITHUB_REPO", "")
 LOGO = os.path.join(BASE, "logo.png")
-LOGO_URL = "https://codeberg.org/uabc-bot/uabc-idiomas-bot/raw/main/logo.png"
+LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
 os.makedirs(AUDIOS, exist_ok=True)
 os.makedirs(CARPETA, exist_ok=True)
 
@@ -148,8 +148,13 @@ async def producir_audio(respuesta, lang):
 @app.post("/api/chat")
 async def api_chat(req: Request):
     d = await req.json()
-    respuesta, lang, state = router(d.get("msg"), d.get("hist"), d.get("state"), d.get("lang", "auto"))
-    audio = await producir_audio(respuesta, lang)
+    try:
+        respuesta, lang, state = router(d.get("msg"), d.get("hist"), d.get("state"), d.get("lang", "auto"))
+        audio = await producir_audio(respuesta, lang)
+    except Exception as e:
+        respuesta = f"⚠️ Error interno: {type(e).__name__}: {e}"
+        audio = None
+        state = d.get("state") or {}
     return {"reply": respuesta, "audio": audio, "state": state}
 
 @app.post("/api/voice")
@@ -203,6 +208,18 @@ async def logo():
         return FileResponse(LOGO)
     return JSONResponse({})
 
+import sistema as _sist
+
+@app.get("/api/debug")
+async def api_debug():
+    out = {"gemini": bool(_sist.cliente_gemini), "groq": bool(_sist.GROQ_KEY), "openrouter": bool(_sist.OR_KEY)}
+    try:
+        t, l = _sist.responder("Di solo la palabra: listo", [])
+        out["respuesta"] = t[:100]
+    except Exception as e:
+        out["error_texto"] = f"{type(e).__name__}: {e}"
+    return out
+
 PAGINA = """
 <!DOCTYPE html>
 <html lang="es">
@@ -213,7 +230,7 @@ PAGINA = """
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
-  .wrap { max-width: 780px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; }
+  .wrap { max-width: 960px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; }
   header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
   header img { width: 54px; height: 54px; background: #fff; border-radius: 12px; padding: 3px; }
   header h1 { font-size: 17px; } header p { font-size: 12px; opacity: .85; }
@@ -227,7 +244,10 @@ PAGINA = """
   .bub { padding: 10px 14px; border-radius: 16px; font-size: 14.5px; line-height: 1.45; box-shadow: 0 1px 2px rgba(0,0,0,.12); white-space: pre-wrap; }
   .user .bub { background: #d9f6c8; border-bottom-right-radius: 4px; }
   .bot .bub { background: #fff; border-bottom-left-radius: 4px; }
-  .msg audio { width: 240px; max-width: 100%; }
+  .msg audio { width: 260px; max-width: 100%; }
+  .think .bub { background: #fff; color: #666; font-style: italic; }
+  .dots::after { content: ''; animation: pts 1.2s steps(4) infinite; }
+  @keyframes pts { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px; }
   .chips button { font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid #cfd8dc; background: #fff; cursor: pointer; }
   .bar { display: flex; gap: 8px; padding: 10px 12px 14px; align-items: center; }
@@ -241,6 +261,13 @@ PAGINA = """
   #drawer { display: none; background: #fff; margin: 0 12px 8px; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 13px; }
   #drawer input, #drawer select { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
   #drawer button { margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #00684a; color: #fff; cursor: pointer; }
+  @media (min-width: 900px) {
+    .bub { font-size: 16.5px; }
+    header h1 { font-size: 21px; }
+    header p { font-size: 13px; }
+    #inp { font-size: 17px; padding: 14px 22px; }
+    .msg { max-width: 70%; }
+  }
 </style>
 </head>
 <body>
@@ -289,12 +316,20 @@ function bubble(role, text, audio){
   if (audio) h += '<audio controls src="' + audio + '"></audio>';
   d.innerHTML = h; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
 }
+function thinking(){
+  removeThink();
+  const d = document.createElement('div'); d.className = 'msg bot think'; d.id = 'think';
+  d.innerHTML = '<div class="bub">🤔 Trabajando en tu respuesta<span class="dots"></span></div>';
+  chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+}
+function removeThink(){ const t = document.getElementById('think'); if (t) t.remove(); }
 bubble('bot', '👋 ¡Hola! Soy UABCBot Idiomas, el asistente de la Facultad de Idiomas UABC. Toca una opción o escribe/dime tu pregunta. (Personal docente: escribe "administración").');
 async function send(msg){
   if (!msg.trim()) return;
   bubble('user', msg); hist.push({role:'user', content: msg}); inp.value = '';
+  thinking();
   const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg, hist: hist.slice(-7), state, lang: langPref})});
-  const d = await r.json(); state = d.state;
+  const d = await r.json(); removeThink(); state = d.state;
   hist.push({role:'assistant', content: d.reply}); bubble('bot', d.reply, d.audio);
 }
 document.getElementById('send').onclick = () => send(inp.value);
@@ -312,13 +347,14 @@ mic.onclick = async () => {
   rec.ondataavailable = e => chunks.push(e.data);
   rec.onstop = async () => {
     stream.getTracks().forEach(t => t.stop()); mic.classList.remove('rec');
+    thinking();
     const fd = new FormData();
     fd.append('audio', new Blob(chunks, {type:'audio/webm'}), 'voz.webm');
     fd.append('hist', JSON.stringify(hist.slice(-7)));
     fd.append('state', JSON.stringify(state));
     fd.append('lang', langPref);
     const d = await (await fetch('/api/voice', {method:'POST', body: fd})).json();
-    state = d.state;
+    removeThink(); state = d.state;
     if (d.texto) { bubble('user', '🎤 ' + d.texto); hist.push({role:'user', content: d.texto}); }
     if (d.reply) { bubble('bot', d.reply, d.audio); hist.push({role:'assistant', content: d.reply}); }
   };
