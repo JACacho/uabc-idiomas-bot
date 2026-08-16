@@ -52,7 +52,7 @@ def sistema_prompt(contexto):
     return (
         "Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC (Mexicali). "
         "Responde con amabilidad y en el idioma de la pregunta (español, inglés o francés), usando SOLO el CONTEXTO. "
-        "No inventes datos. No escripas etiquetas ni corchetes al inicio de la respuesta. "
+        "No inventes datos. No escribas etiquetas ni corchetes al inicio de la respuesta. "
         "Si la información no está en el CONTEXTO, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
         f"\n=== CONTEXTO ===\n{contexto}"
     )
@@ -107,6 +107,21 @@ def responder(pregunta, historial):
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
     return texto, detectar_idioma(pregunta)
 
+def transcribir_groq(data):
+    if not GROQ_KEY:
+        return ""
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {GROQ_KEY}"},
+            files={"file": ("voz.webm", data, "audio/webm")},
+            data={"model": "whisper-large-v3"},
+            timeout=60,
+        )
+        return (r.json().get("text") or "").strip()
+    except Exception:
+        return ""
+
 def transcribir(audio_bytes):
     if cliente_gemini:
         for modelo in ("gemini-2.5-flash", "gemini-2.0-flash"):
@@ -124,6 +139,9 @@ def transcribir(audio_bytes):
                         return t, detectar_idioma(t)
                 except Exception:
                     continue
+    t = transcribir_groq(audio_bytes)
+    if t:
+        return t, detectar_idioma(t)
     return "", "es"
 
 async def generar_voz(texto, lang):
