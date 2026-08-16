@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import time
 import asyncio
 import tempfile
 import requests
@@ -13,6 +15,7 @@ except Exception:
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
 CARPETA = os.path.join(BASE, "datos_bot")
+CACHE = os.path.join(BASE, "cache.json")
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
@@ -21,7 +24,7 @@ VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-Denis
 
 def detectar_idioma(texto):
     t = (texto or "").lower()
-    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits"]
+    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits", "je", "étudier"]
     en = ["hello", "thank", "how many", "credits", "degree", "translation", "what", "when", "where", "i want"]
     hf = sum(1 for w in fr if w in t)
     he = sum(1 for w in en if w in t)
@@ -50,7 +53,7 @@ def cargar_contexto():
 
 def sistema_prompt(contexto):
     return (
-        "Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC (Mexicali). "
+        "Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
         "Responde con amabilidad y en el idioma de la pregunta (español, inglés o francés), usando SOLO el CONTEXTO. "
         "No inventes datos. No escribas etiquetas ni corchetes al inicio de la respuesta. "
         "Si la información no está en el CONTEXTO, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
@@ -60,37 +63,64 @@ def sistema_prompt(contexto):
 def llamar_gemini(sp, hist, pregunta):
     if not cliente_gemini:
         return None
-    try:
-        contents = []
-        for m in hist:
-            contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
-        contents.append({"role": "user", "parts": [{"text": pregunta}]})
-        r = cliente_gemini.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(system_instruction=sp),
-        )
-        return (r.text or "").strip() or None
-    except Exception:
-        return None
+    for intento in (1, 2):
+        try:
+            contents = []
+            for m in hist:
+                contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
+            contents.append({"role": "user", "parts": [{"text": pregunta}]})
+            r = cliente_gemini.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=types.GenerateContentConfig(system_instruction=sp),
+            )
+            t = (r.text or "").strip()
+            if t:
+                return t
+        except Exception:
+            if intento == 1:
+                time.sleep(2)
+    return None
 
-def llamar_openai(sp, hist, pregunta, url, key, modelo):
+def llamar_openai(sp, hist, pregunta, url, key, modelos):
     if not key:
         return None
+    for modelo in modelos:
+        try:
+            msgs = [{"role": "system", "content": sp}] + hist + [{"role": "user", "content": pregunta}]
+            r = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": modelo, "messages": msgs},
+                timeout=60,
+            )
+            d = r.json()
+            t = (d["choices"][0]["message"]["content"] or "").strip()
+            if t:
+                return t
+        except Exception:
+            continue
+    return None
+
+def _cargar_cache():
     try:
-        msgs = [{"role": "system", "content": sp}] + hist + [{"role": "user", "content": pregunta}]
-        r = requests.post(
-            url,
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"model": modelo, "messages": msgs},
-            timeout=60,
-        )
-        d = r.json()
-        return (d["choices"][0]["message"]["content"] or "").strip() or None
+        with open(CACHE, encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        return None
+        return {}
+
+def _guardar_cache(c):
+    try:
+        with open(CACHE, "w", encoding="utf-8") as f:
+            json.dump(c, f, ensure_ascii=False)
+    except Exception:
+        pass
 
 def responder(pregunta, historial):
+    clave = (pregunta or "").strip().lower()[:120]
+    cache = _cargar_cache()
+    if clave in cache:
+        return cache[clave][0], cache[clave][1]
     contexto = cargar_contexto()
     sp = sistema_prompt(contexto)
     hist = []
@@ -99,13 +129,17 @@ def responder(pregunta, historial):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
     texto = llamar_gemini(sp, hist, pregunta)
     if not texto:
-        texto = llamar_openai(sp, hist, pregunta, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, "llama-3.3-70b-versatile")
+        texto = llamar_openai(sp, hist, pregunta, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"])
     if not texto:
-        texto = llamar_openai(sp, hist, pregunta, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, "meta-llama/llama-3.3-70b-instruct:free")
+        texto = llamar_openai(sp, hist, pregunta, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, ["meta-llama/llama-3.3-70b-instruct:free", "google/gemma-3-27b-it:free", "mistralai/mistral-7b-instruct:free"])
     if not texto:
-        texto = "⚠️ No pude generar una respuesta en este momento. Intenta de nuevo en unos segundos."
+        texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
-    return texto, detectar_idioma(pregunta)
+    lang = detectar_idioma(pregunta)
+    if not texto.startswith("⚠️"):
+        cache[clave] = [texto, lang]
+        _guardar_cache(cache)
+    return texto, lang
 
 def transcribir_groq(data):
     if not GROQ_KEY:
