@@ -1,2 +1,2 @@
 === Avisos | Subido: 16/08/2026 | Vigente hasta: sin límite ===
-regresa al modo normal
+Cierra el administrador.
