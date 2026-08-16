@@ -4,6 +4,8 @@ import uuid
 import json
 import base64
 import asyncio
+import hashlib
+import secrets
 import requests as http_requests
 from datetime import datetime
 from collections import Counter
@@ -18,6 +20,8 @@ AUDIOS = os.path.join(BASE, "audios")
 CONVS = os.path.join(BASE, "conversaciones")
 CONTADOR = os.path.join(BASE, "conteo.txt")
 USO = os.path.join(BASE, "uso.jsonl")
+USERS = os.path.join(BASE, "users.json")
+SESSIONS = os.path.join(BASE, "sessions.json")
 CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "fimxl2026")
 GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO = os.environ.get("GITHUB_REPO", "")
@@ -43,6 +47,23 @@ FAQ = [
     (["admision", "requisito", "inscri"], "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"),
     (["carrera", "tsu", "tecnico", "técnico"], "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"),
 ]
+
+def _jload(p, d={}):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return d
+
+def _jdump(p, d):
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _hash(clave, salt):
+    return hashlib.sha256((salt + clave).encode("utf-8")).hexdigest()
 
 def normalizar_faq(texto):
     t = (texto or "").lower()
@@ -118,7 +139,7 @@ def router(msg, hist, state, lang_pref):
         state["pending"] = False
         if texto == CLAVE_ADMIN:
             state["active"] = True
-            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o graba una nota de voz en el panel) y lo publico al instante. Escribe SALIR para cerrar.", None, state
+            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o usa el panel ⚙️ para documentos y notas de voz). Escribe SALIR para cerrar.", None, state
         return "❌ Clave incorrecta.", None, state
     if state.get("active"):
         if texto.upper() == "SALIR":
@@ -150,6 +171,40 @@ async def producir_audio(respuesta, lang):
     except Exception:
         pass
     return None
+
+@app.post("/api/register")
+async def api_register(req: Request):
+    d = await req.json()
+    u = (d.get("usuario") or "").strip().lower()
+    c = d.get("clave") or ""
+    if len(u) < 3 or len(c) < 4:
+        return {"ok": False, "error": "Usuario ≥ 3 y clave ≥ 4 caracteres."}
+    users = _jload(USERS, {})
+    if u in users:
+        return {"ok": False, "error": "Ese usuario ya existe; inicia sesión."}
+    salt = secrets.token_hex(8)
+    users[u] = {"salt": salt, "hash": _hash(c, salt)}
+    _jdump(USERS, users)
+    tok = secrets.token_hex(16)
+    ses = _jload(SESSIONS, {})
+    ses[tok] = u
+    _jdump(SESSIONS, ses)
+    return {"ok": True, "usuario": u}
+
+@app.post("/api/login")
+async def api_login(req: Request):
+    d = await req.json()
+    u = (d.get("usuario") or "").strip().lower()
+    c = d.get("clave") or ""
+    users = _jload(USERS, {})
+    rec = users.get(u)
+    if not rec or rec["hash"] != _hash(c, rec["salt"]):
+        return {"ok": False, "error": "Usuario o clave incorrectos."}
+    tok = secrets.token_hex(16)
+    ses = _jload(SESSIONS, {})
+    ses[tok] = u
+    _jdump(SESSIONS, ses)
+    return {"ok": True, "usuario": u}
 
 @app.post("/api/chat")
 async def api_chat(req: Request):
@@ -215,7 +270,7 @@ async def topfaq():
     return [{"q": q, "n": n} for q, n in c.most_common(4)]
 
 @app.post("/api/upload")
-async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("1")):
+async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("0")):
     nombre_orig = archivo.filename or "doc.txt"
     tmp = os.path.join(BASE, "tmp_" + nombre_orig)
     with open(tmp, "wb") as f:
@@ -267,17 +322,19 @@ async def conv_save(req: Request):
     d = await req.json()
     cid = re.sub(r"[^a-zA-Z0-9_-]", "", d.get("id", ""))[:40] or "c"
     with open(os.path.join(CONVS, cid + ".json"), "w", encoding="utf-8") as f:
-        json.dump({"id": cid, "titulo": d.get("titulo", "Conversación"), "fecha": datetime.now().isoformat(), "msgs": d.get("msgs", [])}, f, ensure_ascii=False)
+        json.dump({"id": cid, "user": d.get("user", ""), "titulo": d.get("titulo", "Conversación"), "fecha": datetime.now().isoformat(), "msgs": d.get("msgs", [])}, f, ensure_ascii=False)
     return {"ok": True}
 
 @app.get("/api/conv/list")
-async def conv_list():
+async def conv_list(user: str = ""):
     out = []
     for fn in os.listdir(CONVS):
         if fn.endswith(".json"):
             try:
                 with open(os.path.join(CONVS, fn), encoding="utf-8") as f:
                     d = json.load(f)
+                if user and d.get("user") != user:
+                    continue
                 out.append({"id": d["id"], "titulo": d.get("titulo", "Conversación"), "fecha": d.get("fecha", "")})
             except Exception:
                 pass
@@ -364,7 +421,7 @@ PAGINA = """
   #gear { position: fixed; right: 10px; top: 74px; background: rgba(0,0,0,.25); border: none; color: #fff; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; z-index: 5; }
   #convs { display: none; }
   .drawer { display: none; background: #fff; margin: 0 12px 8px; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 13px; max-height: 60vh; overflow-y: auto; }
-  .drawer input { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
+  .drawer input, .drawer select { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
   .drawer button { margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #00684a; color: #fff; cursor: pointer; }
   .drawer .item { display: block; width: 100%; background: #f2f4f7; color: #222; margin: 4px 0; text-align: left; }
   #dlist { white-space: pre-wrap; background: #f7f9fa; border-radius: 8px; padding: 8px; margin-top: 6px; font-size: 12px; }
@@ -393,17 +450,31 @@ PAGINA = """
         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
       </div>
       <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
+      <button id="user" class="hbtn" title="Tu cuenta">👤</button>
       <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
     </header>
     <button id="gear" title="Personal autorizado">⚙️</button>
     <div id="cdrawer" class="drawer"><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="udrawer" class="drawer">
+      <b>👤 Tu cuenta</b>
+      <div id="who"></div>
+      <input id="uusr" placeholder="Usuario">
+      <input id="ukey" type="password" placeholder="Clave">
+      <button id="ureg">✨ Registrarme</button>
+      <button id="ulin">🔑 Entrar</button>
+      <button id="uguest">👋 Seguir como invitado</button>
+      <button id="uout">🚪 Cerrar sesión</button>
+    </div>
     <div id="chat"></div>
     <div id="drawer" class="drawer">
       <b>🛠️ Panel de personal</b>
       <input id="clave" type="password" placeholder="Clave de acceso">
       <button id="unlock">🔓 Entrar</button>
+      <button id="salirp">🚪 Salir del panel</button>
       <div id="zona" style="display:none">
-        <input id="fcat" placeholder="Categoría (Avisos, Horarios, TSU, PlanDeEstudios...)">
+        <select id="fcat">
+          <option>Avisos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>Eventos</option><option>TSU</option><option>PlanDeEstudios</option>
+        </select>
         <input id="fvig" type="date">
         <input id="ffile" type="file">
         <button id="fsubir">📤 Subir documento</button>
@@ -425,6 +496,7 @@ PAGINA = """
 </div>
 <script>
 let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid();
+let currentUser = localStorage.getItem('uabc_user') || "";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -433,6 +505,7 @@ function bubble(role, text, audio){
   let h = '<div class="bub">' + esc(text) + '</div>';
   if (audio) h += '<audio controls src="' + audio + '"></audio>';
   d.innerHTML = h; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+  return d;
 }
 async function welcome(){
   let opts = [
@@ -460,12 +533,22 @@ function thinking(){
   chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
 }
 function removeThink(){ const t = document.getElementById('think'); if (t) t.remove(); }
+function refreshWho(){
+  document.getElementById('who').innerText = currentUser ? '✅ Sesión: ' + currentUser + ' (tus conversaciones se guardan)' : '👋 Modo invitado: sin memoria de conversaciones.';
+}
 function saveConv(){
+  if (!currentUser) return;
   const titulo = ((hist.find(m => m.role === 'user') || {}).content || 'Nueva conversación').slice(0, 40);
-  fetch('/api/conv/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: currentId, titulo, msgs: hist})}).then(() => loadList());
+  fetch('/api/conv/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: currentId, user: currentUser, titulo, msgs: hist})}).then(() => loadList());
 }
 async function loadList(){
-  const d = await (await fetch('/api/conv/list')).json();
+  if (!currentUser) {
+    const msg = '<small>👋 Invitado: sin memoria. Regístrate con 👤 para guardar tus conversaciones.</small>';
+    document.getElementById('lista').innerHTML = msg;
+    document.getElementById('lista2').innerHTML = msg;
+    return;
+  }
+  const d = await (await fetch('/api/conv/list?user=' + encodeURIComponent(currentUser))).json();
   const html = d.map(c => '<button class="item" data-id="' + c.id + '">' + esc(c.titulo) + '</button>').join('');
   document.getElementById('lista').innerHTML = html || '<small>Sin conversaciones aún.</small>';
   document.getElementById('lista2').innerHTML = html || '<small>Sin conversaciones aún.</small>';
@@ -486,7 +569,11 @@ function nueva(){
 }
 async function send(msg){
   if (!msg.trim()) return;
-  bubble('user', msg); hist.push({role:'user', content: msg}); inp.value = '';
+  const esClave = state.pending;
+  const el = bubble('user', msg);
+  hist.push({role:'user', content: esClave ? '••••••' : msg});
+  if (esClave) setTimeout(() => { el.querySelector('.bub').textContent = '🔑 ••••••'; }, 30000);
+  inp.value = '';
   thinking();
   const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg, hist: hist.slice(-7), state, lang: langPref})});
   const d = await r.json(); removeThink(); state = d.state;
@@ -502,6 +589,21 @@ inp.onkeydown = e => { if (e.key === 'Enter') send(inp.value); };
 document.getElementById('nuevo').onclick = nueva;
 document.getElementById('nueva').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
+document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
+document.getElementById('ureg').onclick = async () => {
+  const d = await (await fetch('/api/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
+  if (!d.ok) return alert(d.error);
+  currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
+  refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
+};
+document.getElementById('ulin').onclick = async () => {
+  const d = await (await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
+  if (!d.ok) return alert(d.error);
+  currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
+  refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
+};
+document.getElementById('uguest').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
+document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
   document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
 });
@@ -528,6 +630,7 @@ mic.onclick = async () => {
   rec.start(); mic.classList.add('rec');
 };
 document.getElementById('gear').onclick = () => { const d = document.getElementById('drawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; };
+document.getElementById('salirp').onclick = () => { state = {pending:false, active:false}; document.getElementById('drawer').style.display = 'none'; document.getElementById('zona').style.display = 'none'; };
 document.getElementById('unlock').onclick = async () => {
   const r = await fetch('/api/unlock', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})});
   const d = await r.json();
@@ -539,7 +642,7 @@ document.getElementById('fsubir').onclick = async () => {
   const f = document.getElementById('ffile').files[0]; if (!f) return alert('Selecciona un archivo');
   const fd = new FormData();
   fd.append('archivo', f);
-  fd.append('categoria', document.getElementById('fcat').value || 'Avisos');
+  fd.append('categoria', document.getElementById('fcat').value);
   fd.append('vigencia', document.getElementById('fvig').value);
   fd.append('reemplazar', '0');
   const d = await (await fetch('/api/upload', {method:'POST', body: fd})).json();
@@ -560,7 +663,7 @@ document.getElementById('nota').onclick = async () => {
     stream.getTracks().forEach(t => t.stop());
     const fd = new FormData();
     fd.append('audio', new Blob(ch, {type:'audio/webm'}), 'nota.webm');
-    fd.append('categoria', document.getElementById('fcat').value || 'Avisos');
+    fd.append('categoria', document.getElementById('fcat').value);
     const d = await (await fetch('/api/voice_note', {method:'POST', body: fd})).json();
     document.getElementById('fest').innerText = d.estado;
     loadDocs();
@@ -574,7 +677,7 @@ document.getElementById('rep').onclick = async () => {
   document.getElementById('fest').innerText = '📊 Total: ' + d.total + ' · Hoy: ' + d.hoy + ' · Idiomas: ' + JSON.stringify(d.idiomas)
     + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
 };
-welcome(); loadList();
+welcome(); loadList(); refreshWho(); inp.focus();
 </script>
 </body>
 </html>
