@@ -292,6 +292,16 @@ async def api_debug():
         out["error_texto"] = f"{type(e).__name__}: {e}"
     return out
 
+@app.get("/api/cache/clear")
+async def cache_clear(clave: str = ""):
+    if clave != CLAVE_ADMIN:
+        return {"ok": False}
+    try:
+        os.remove(os.path.join(BASE, "cache.json"))
+    except Exception:
+        pass
+    return {"ok": True}
+
 PAGINA = """
 <!DOCTYPE html>
 <html lang="es">
