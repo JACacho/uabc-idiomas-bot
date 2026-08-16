@@ -364,7 +364,7 @@ PAGINA = """
   <main>
     <header>
       <img src="/logo.png" alt="logo">
-      <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas de la UABC en Mexicali · es · en · fr</p></div>
+      <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas de la UABC en Mexicali</p></div>
       <div class="langs">
         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
       </div>
@@ -471,7 +471,7 @@ document.getElementById('nuevo').onclick = nueva;
 document.getElementById('nueva').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
-  document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on')); };
+  document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
 });
 const mic = document.getElementById('mic');
 mic.onclick = async () => {
