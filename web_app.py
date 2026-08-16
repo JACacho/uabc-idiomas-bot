@@ -367,4 +367,222 @@ PAGINA = """
   .drawer input { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
   .drawer button { margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #00684a; color: #fff; cursor: pointer; }
   .drawer .item { display: block; width: 100%; background: #f2f4f7; color: #222; margin: 4px 0; text-align: left; }
-  #dlist { white-space
+  #dlist { white-space: pre-wrap; background: #f7f9fa; border-radius: 8px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  @media (max-width: 900px) { #side { display: none; } #convs { display: block; } }
+  @media (min-width: 900px) {
+    .bub { font-size: 16.5px; }
+    header h1 { font-size: 21px; }
+    header p { font-size: 13px; }
+    #inp { font-size: 17px; padding: 14px 22px; }
+    .msg { max-width: 70%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside id="side">
+    <b>🗂️ Conversaciones</b>
+    <button id="nueva">➕ Nueva conversación</button>
+    <div id="lista"></div>
+  </aside>
+  <main>
+    <header>
+      <img src="/logo.png" alt="logo">
+      <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas de la UABC en Mexicali</p></div>
+      <div class="langs">
+        <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
+      </div>
+      <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
+      <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
+    </header>
+    <button id="gear" title="Personal autorizado">⚙️</button>
+    <div id="cdrawer" class="drawer"><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="chat"></div>
+    <div id="drawer" class="drawer">
+      <b>🛠️ Panel de personal</b>
+      <input id="clave" type="password" placeholder="Clave de acceso">
+      <button id="unlock">🔓 Entrar</button>
+      <div id="zona" style="display:none">
+        <input id="fcat" placeholder="Categoría (Avisos, Horarios, TSU, PlanDeEstudios...)">
+        <input id="fvig" type="date">
+        <input id="ffile" type="file">
+        <button id="fsubir">📤 Subir documento</button>
+        <button id="nota">🎤 Grabar nota de voz</button>
+        <button id="ldocs">🔄 Ver documentos</button>
+        <button id="rep">📊 Reporte de uso</button>
+        <div id="dlist"></div>
+        <input id="fdel" placeholder="Nombre del documento a borrar">
+        <button id="bdel">🗑️ Borrar</button>
+        <div id="fest"></div>
+      </div>
+    </div>
+    <div class="bar">
+      <button id="mic">🎤</button>
+      <input id="inp" placeholder="Escribe o dime tu pregunta…">
+      <button id="send">➤</button>
+    </div>
+  </main>
+</div>
+<script>
+let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid();
+const chat = document.getElementById('chat'), inp = document.getElementById('inp');
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function bubble(role, text, audio){
+  const d = document.createElement('div'); d.className = 'msg ' + role;
+  let h = '<div class="bub">' + esc(text) + '</div>';
+  if (audio) h += '<audio controls src="' + audio + '"></audio>';
+  d.innerHTML = h; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+}
+async function welcome(){
+  let opts = [
+    {q:"¿Cuántos créditos necesito para titularme en Traducción?", t:"💳 Créditos para titularme"},
+    {q:"¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t:"📅 Horarios del CEC"},
+    {q:"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t:"🎓 Requisitos de admisión"},
+    {q:"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t:"🏛️ Carreras y TSU"}
+  ];
+  try {
+    const d = await (await fetch('/api/topfaq')).json();
+    if (d && d.length) opts = d.map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+  } catch(e) {}
+  const d = document.createElement('div'); d.className = 'msg bot';
+  d.innerHTML = '<div class="bub">👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.<div class="opts">'
+    + opts.map(o => '<button data-q="' + esc(o.q) + '">' + esc(o.t) + '</button>').join('')
+    + '</div><span class="nota">Personal docente: escribe o di "administración".</span></div>';
+  chat.appendChild(d);
+  d.querySelectorAll('[data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
+  chat.scrollTop = chat.scrollHeight;
+}
+function thinking(){
+  removeThink();
+  const d = document.createElement('div'); d.className = 'msg bot think'; d.id = 'think';
+  d.innerHTML = '<div class="bub">🤔 Trabajando en tu respuesta<span class="dots"></span></div>';
+  chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+}
+function removeThink(){ const t = document.getElementById('think'); if (t) t.remove(); }
+function saveConv(){
+  const titulo = ((hist.find(m => m.role === 'user') || {}).content || 'Nueva conversación').slice(0, 40);
+  fetch('/api/conv/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: currentId, titulo, msgs: hist})}).then(() => loadList());
+}
+async function loadList(){
+  const d = await (await fetch('/api/conv/list')).json();
+  const html = d.map(c => '<button class="item" data-id="' + c.id + '">' + esc(c.titulo) + '</button>').join('');
+  document.getElementById('lista').innerHTML = html || '<small>Sin conversaciones aún.</small>';
+  document.getElementById('lista2').innerHTML = html || '<small>Sin conversaciones aún.</small>';
+  document.querySelectorAll('[data-id]').forEach(b => b.onclick = () => openConv(b.dataset.id));
+}
+async function openConv(id){
+  const d = await (await fetch('/api/conv/get?id=' + id)).json();
+  if (!d.msgs) return;
+  currentId = id; hist = d.msgs; state = {pending:false, active:false};
+  chat.innerHTML = '';
+  hist.forEach(m => bubble(m.role, m.content, m.audio));
+  document.getElementById('cdrawer').style.display = 'none';
+}
+function nueva(){
+  currentId = uid(); hist = []; state = {pending:false, active:false};
+  chat.innerHTML = ''; welcome(); loadList();
+  document.getElementById('cdrawer').style.display = 'none';
+}
+async function send(msg){
+  if (!msg.trim()) return;
+  bubble('user', msg); hist.push({role:'user', content: msg}); inp.value = '';
+  thinking();
+  const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg, hist: hist.slice(-7), state, lang: langPref})});
+  const d = await r.json(); removeThink(); state = d.state;
+  hist.push({role:'assistant', content: d.reply, audio: d.audio}); bubble('bot', d.reply, d.audio);
+  saveConv();
+}
+async function loadDocs(){
+  const d = await (await fetch('/api/docs')).json();
+  document.getElementById('dlist').innerText = (d.docs || []).join('\\n') || 'Sin documentos.';
+}
+document.getElementById('send').onclick = () => send(inp.value);
+inp.onkeydown = e => { if (e.key === 'Enter') send(inp.value); };
+document.getElementById('nuevo').onclick = nueva;
+document.getElementById('nueva').onclick = nueva;
+document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
+[['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
+  document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
+});
+const mic = document.getElementById('mic');
+mic.onclick = async () => {
+  if (rec && rec.state === 'recording') { rec.stop(); return; }
+  const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+  chunks = []; rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop()); mic.classList.remove('rec');
+    thinking();
+    const fd = new FormData();
+    fd.append('audio', new Blob(chunks, {type:'audio/webm'}), 'voz.webm');
+    fd.append('hist', JSON.stringify(hist.slice(-7)));
+    fd.append('state', JSON.stringify(state));
+    fd.append('lang', langPref);
+    const d = await (await fetch('/api/voice', {method:'POST', body: fd})).json();
+    removeThink(); state = d.state;
+    if (d.texto) { bubble('user', '🎤 ' + d.texto); hist.push({role:'user', content: d.texto}); }
+    if (d.reply) { bubble('bot', d.reply, d.audio); hist.push({role:'assistant', content: d.reply, audio: d.audio}); }
+    saveConv();
+  };
+  rec.start(); mic.classList.add('rec');
+};
+document.getElementById('gear').onclick = () => { const d = document.getElementById('drawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; };
+document.getElementById('unlock').onclick = async () => {
+  const r = await fetch('/api/unlock', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})});
+  const d = await r.json();
+  document.getElementById('zona').style.display = d.ok ? 'block' : 'none';
+  if (d.ok) loadDocs();
+  if (!d.ok) alert('❌ Clave incorrecta');
+};
+document.getElementById('fsubir').onclick = async () => {
+  const f = document.getElementById('ffile').files[0]; if (!f) return alert('Selecciona un archivo');
+  const fd = new FormData();
+  fd.append('archivo', f);
+  fd.append('categoria', document.getElementById('fcat').value || 'Avisos');
+  fd.append('vigencia', document.getElementById('fvig').value);
+  fd.append('reemplazar', '0');
+  const d = await (await fetch('/api/upload', {method:'POST', body: fd})).json();
+  document.getElementById('fest').innerText = d.estado;
+  loadDocs();
+};
+document.getElementById('ldocs').onclick = loadDocs;
+document.getElementById('bdel').onclick = async () => {
+  const d = await (await fetch('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value, nombre: document.getElementById('fdel').value})})).json();
+  document.getElementById('fest').innerText = d.estado; loadDocs();
+};
+document.getElementById('nota').onclick = async () => {
+  if (rec2 && rec2.state === 'recording') { rec2.stop(); return; }
+  const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+  let ch = []; rec2 = new MediaRecorder(stream);
+  rec2.ondataavailable = e => ch.push(e.data);
+  rec2.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    const fd = new FormData();
+    fd.append('audio', new Blob(ch, {type:'audio/webm'}), 'nota.webm');
+    fd.append('categoria', document.getElementById('fcat').value || 'Avisos');
+    const d = await (await fetch('/api/voice_note', {method:'POST', body: fd})).json();
+    document.getElementById('fest').innerText = d.estado;
+    loadDocs();
+  };
+  rec2.start();
+  document.getElementById('fest').innerText = '🔴 Grabando nota… toca de nuevo para terminar.';
+};
+document.getElementById('rep').onclick = async () => {
+  const d = await (await fetch('/api/report', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})})).json();
+  if (d.error) return alert(d.error);
+  document.getElementById('fest').innerText = '📊 Total: ' + d.total + ' · Hoy: ' + d.hoy + ' · Idiomas: ' + JSON.stringify(d.idiomas)
+    + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
+};
+welcome(); loadList();
+</script>
+</body>
+</html>
+"""
+
+@app.get("/")
+async def inicio():
+    return HTMLResponse(PAGINA)
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))
