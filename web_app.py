@@ -226,7 +226,7 @@ PAGINA = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>UABCBot Idiomas — Facultad de Idiomas UABC</title>
+<title>UABCBot Idiomas — Facultad de Idiomas de la UABC en Mexicali</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
@@ -234,9 +234,10 @@ PAGINA = """
   header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
   header img { width: 54px; height: 54px; background: #fff; border-radius: 12px; padding: 3px; }
   header h1 { font-size: 17px; } header p { font-size: 12px; opacity: .85; }
-  .langs { margin-left: auto; display: flex; gap: 5px; }
+  .langs { display: flex; gap: 5px; margin-left: 14px; }
   .langs button { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: transparent; color: #fff; cursor: pointer; }
   .langs button.on { background: #f7941d; border-color: #f7941d; font-weight: 700; }
+  .hbtn { margin-left: auto; background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
   .msg.user { align-self: flex-end; align-items: flex-end; }
@@ -248,8 +249,10 @@ PAGINA = """
   .think .bub { background: #fff; color: #666; font-style: italic; }
   .dots::after { content: ''; animation: pts 1.2s steps(4) infinite; }
   @keyframes pts { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
-  .chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 12px; }
-  .chips button { font-size: 12px; padding: 6px 10px; border-radius: 999px; border: 1px solid #cfd8dc; background: #fff; cursor: pointer; }
+  .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .opts button { font-size: 12.5px; padding: 7px 11px; border-radius: 999px; border: 1px solid #00855f; background: #f2fbf6; color: #00684a; cursor: pointer; }
+  .opts button:hover { background: #00855f; color: #fff; }
+  .nota { display: block; margin-top: 9px; font-size: 12px; color: #888; }
   .bar { display: flex; gap: 8px; padding: 10px 12px 14px; align-items: center; }
   #mic { width: 46px; height: 46px; border-radius: 50%; border: none; background: #00684a; color: #fff; font-size: 19px; cursor: pointer; flex-shrink: 0; }
   #mic.rec { background: #d32f2f; animation: pulso 1s infinite; }
@@ -274,10 +277,11 @@ PAGINA = """
 <div class="wrap">
   <header>
     <img src="/logo.png" alt="logo">
-    <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas UABC · es · en · fr</p></div>
+    <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas de la UABC en Mexicali · es · en · fr</p></div>
     <div class="langs">
       <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
     </div>
+    <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
   </header>
   <button id="gear" title="Personal autorizado">⚙️</button>
   <div id="chat"></div>
@@ -292,13 +296,6 @@ PAGINA = """
       <button id="fsubir">📤 Subir y enseñar al bot</button>
       <div id="fest"></div>
     </div>
-  </div>
-  <div class="chips">
-    <button data-q="¿Cuántos créditos necesito para titularme en Traducción?">💳 Créditos</button>
-    <button data-q="¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?">📅 Horarios CEC</button>
-    <button data-q="¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?">🎓 Admisión</button>
-    <button data-q="¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?">🏛️ Carreras y TSU</button>
-    <button id="nuevo">🧹 Nueva conversación</button>
   </div>
   <div class="bar">
     <button id="mic">🎤</button>
@@ -316,6 +313,19 @@ function bubble(role, text, audio){
   if (audio) h += '<audio controls src="' + audio + '"></audio>';
   d.innerHTML = h; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
 }
+function welcome(){
+  const d = document.createElement('div'); d.className = 'msg bot';
+  d.innerHTML = '<div class="bub">👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.'
+    + '<div class="opts">'
+    + '<button data-q="¿Cuántos créditos necesito para titularme en Traducción?">💳 Créditos para titularme</button>'
+    + '<button data-q="¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?">📅 Horarios del CEC</button>'
+    + '<button data-q="¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?">🎓 Requisitos de admisión</button>'
+    + '<button data-q="¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?">🏛️ Carreras y TSU</button>'
+    + '</div><span class="nota">Personal docente: escribe o di "administración".</span></div>';
+  chat.appendChild(d);
+  d.querySelectorAll('[data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
+  chat.scrollTop = chat.scrollHeight;
+}
 function thinking(){
   removeThink();
   const d = document.createElement('div'); d.className = 'msg bot think'; d.id = 'think';
@@ -323,7 +333,7 @@ function thinking(){
   chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
 }
 function removeThink(){ const t = document.getElementById('think'); if (t) t.remove(); }
-bubble('bot', '👋 ¡Hola! Soy UABCBot Idiomas, el asistente de la Facultad de Idiomas UABC. Toca una opción o escribe/dime tu pregunta. (Personal docente: escribe "administración").');
+welcome();
 async function send(msg){
   if (!msg.trim()) return;
   bubble('user', msg); hist.push({role:'user', content: msg}); inp.value = '';
@@ -334,8 +344,7 @@ async function send(msg){
 }
 document.getElementById('send').onclick = () => send(inp.value);
 inp.onkeydown = e => { if (e.key === 'Enter') send(inp.value); };
-document.querySelectorAll('.chips [data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
-document.getElementById('nuevo').onclick = () => { hist = []; state = {pending:false, active:false}; chat.innerHTML = ''; bubble('bot', '🧹 Conversación nueva. ¿En qué te ayudo?'); };
+document.getElementById('nuevo').onclick = () => { hist = []; state = {pending:false, active:false}; chat.innerHTML = ''; welcome(); };
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
   document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
 });
