@@ -54,9 +54,10 @@ def cargar_contexto():
 def sistema_prompt(contexto):
     return (
         "Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
-        "Responde con amabilidad y en el idioma de la pregunta (español, inglés o francés), usando SOLO el CONTEXTO. "
+        "Responde con amabilidad y en el idioma de la pregunta (español, inglés o francés), usando el CONTEXTO. "
+        "Si la respuesta está en el CONTEXTO, úsala con sus datos exactos (cifras, fechas, teléfonos). "
         "No inventes datos. No escribas etiquetas ni corchetes al inicio de la respuesta. "
-        "Si la información no está en el CONTEXTO, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
+        "Solo si la información realmente NO aparece en el CONTEXTO, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
         f"\n=== CONTEXTO ===\n{contexto}"
     )
 
@@ -79,7 +80,7 @@ def llamar_gemini(sp, hist, pregunta):
                 return t
         except Exception:
             if intento == 1:
-                time.sleep(2)
+                time.sleep(1)
     return None
 
 def llamar_openai(sp, hist, pregunta, url, key, modelos):
@@ -92,7 +93,7 @@ def llamar_openai(sp, hist, pregunta, url, key, modelos):
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json={"model": modelo, "messages": msgs},
-                timeout=60,
+                timeout=30,
             )
             d = r.json()
             t = (d["choices"][0]["message"]["content"] or "").strip()
@@ -136,7 +137,7 @@ def responder(pregunta, historial):
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
     lang = detectar_idioma(pregunta)
-    if not texto.startswith("⚠️"):
+    if not texto.startswith("⚠️") and "no está en el contexto" not in texto.lower():
         cache[clave] = [texto, lang]
         _guardar_cache(cache)
     return texto, lang
