@@ -5,6 +5,7 @@ import time
 import asyncio
 import tempfile
 import requests
+from datetime import datetime
 from google.genai import types
 
 try:
@@ -24,7 +25,7 @@ VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-Denis
 
 def detectar_idioma(texto):
     t = (texto or "").lower()
-    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits", "je", "étudier"]
+    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits", "je", "étudier", "français"]
     en = ["hello", "thank", "how many", "credits", "degree", "translation", "what", "when", "where", "i want"]
     hf = sum(1 for w in fr if w in t)
     he = sum(1 for w in en if w in t)
@@ -38,7 +39,7 @@ def cargar_contexto():
     partes = []
     try:
         with open(MANUAL, encoding="utf-8", errors="ignore") as f:
-            partes.append(f.read())
+            partes.append("MANUAL OFICIAL:\n" + f.read())
     except Exception:
         pass
     if os.path.isdir(CARPETA):
@@ -46,17 +47,18 @@ def cargar_contexto():
             if fn.endswith(".txt"):
                 try:
                     with open(os.path.join(CARPETA, fn), encoding="utf-8", errors="ignore") as f:
-                        partes.append(f.read())
+                        partes.append("DOCUMENTO " + fn + ":\n" + f.read())
                 except Exception:
                     pass
     return "\n\n".join(partes)[:18000]
 
 def sistema_prompt(contexto):
+    hoy = datetime.now().strftime("%A %d de %B de %Y")
     return (
-        "Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
+        f"Hoy es {hoy}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
         "Responde con amabilidad y en el idioma de la pregunta (español, inglés o francés), usando el CONTEXTO. "
         "Si la respuesta está en el CONTEXTO, úsala con sus datos exactos (cifras, fechas, teléfonos). "
-        "No inventes datos. No escribas etiquetas ni corchetes al inicio de la respuesta. "
+        "No inventes datos ni repitas encabezados técnicos del CONTEXTO. No escribas etiquetas ni corchetes al inicio. "
         "Solo si la información realmente NO aparece en el CONTEXTO, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
         f"\n=== CONTEXTO ===\n{contexto}"
     )
@@ -73,7 +75,7 @@ def llamar_gemini(sp, hist, pregunta):
             r = cliente_gemini.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=contents,
-                config=types.GenerateContentConfig(system_instruction=sp),
+                config=types.GenerateContentConfig(system_instruction=sp, temperature=0.2),
             )
             t = (r.text or "").strip()
             if t:
@@ -92,7 +94,7 @@ def llamar_openai(sp, hist, pregunta, url, key, modelos):
             r = requests.post(
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": modelo, "messages": msgs},
+                json={"model": modelo, "messages": msgs, "temperature": 0.2},
                 timeout=30,
             )
             d = r.json()
@@ -117,6 +119,10 @@ def _guardar_cache(c):
     except Exception:
         pass
 
+def _es_cacheable(texto):
+    t = (texto or "").lower()
+    return not (texto.startswith("⚠️") or "no está en el contexto" in t or "===" in texto or "manual de conocimiento" in t)
+
 def responder(pregunta, historial):
     clave = (pregunta or "").strip().lower()[:120]
     cache = _cargar_cache()
@@ -137,7 +143,7 @@ def responder(pregunta, historial):
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
     lang = detectar_idioma(pregunta)
-    if not texto.startswith("⚠️") and "no está en el contexto" not in texto.lower():
+    if _es_cacheable(texto):
         cache[clave] = [texto, lang]
         _guardar_cache(cache)
     return texto, lang
@@ -178,6 +184,25 @@ def transcribir(audio_bytes):
     if t:
         return t, detectar_idioma(t)
     return "", "es"
+
+def extraer_imagen(data, mime="image/jpeg"):
+    if not cliente_gemini:
+        return ""
+    for modelo in ("gemini-2.5-flash", "gemini-2.0-flash"):
+        try:
+            r = cliente_gemini.models.generate_content(
+                model=modelo,
+                contents=[
+                    types.Part(inline_data=types.Blob(data=data, mime_type=mime)),
+                    "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios.",
+                ],
+            )
+            t = (r.text or "").strip()
+            if t:
+                return t
+        except Exception:
+            continue
+    return ""
 
 async def generar_voz(texto, lang):
     try:
