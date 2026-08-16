@@ -1,10 +1,12 @@
 import os
 import re
 import uuid
+import json
 import base64
 import asyncio
 import requests as http_requests
 from datetime import datetime
+from collections import Counter
 from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
@@ -13,14 +15,16 @@ from sistema import responder, transcribir, generar_voz
 BASE = os.path.dirname(os.path.abspath(__file__))
 CARPETA = os.path.join(BASE, "datos_bot")
 AUDIOS = os.path.join(BASE, "audios")
+CONVS = os.path.join(BASE, "conversaciones")
 CONTADOR = os.path.join(BASE, "conteo.txt")
+USO = os.path.join(BASE, "uso.jsonl")
 CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "fimxl2026")
 GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO = os.environ.get("GITHUB_REPO", "")
 LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
-os.makedirs(AUDIOS, exist_ok=True)
-os.makedirs(CARPETA, exist_ok=True)
+for d in (AUDIOS, CARPETA, CONVS):
+    os.makedirs(d, exist_ok=True)
 
 try:
     if not os.path.exists(LOGO):
@@ -41,11 +45,11 @@ FAQ = [
 ]
 
 def normalizar_faq(texto):
-    t = texto.lower()
+    t = (texto or "").lower()
     for claves, canonica in FAQ:
         if any(k in t for k in claves) and len(t) < 90:
             return canonica
-    return texto
+    return texto or ""
 
 def limpiar_tags(texto):
     return re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto or "").strip()
@@ -77,16 +81,19 @@ def github_borrar(ruta_repo):
     except Exception:
         pass
 
-def sumar_pregunta():
+def log_uso(texto, lang, via):
     try:
-        n = 0
-        if os.path.exists(CONTADOR):
-            n = int(open(CONTADOR).read().strip() or "0")
-        n += 1
-        with open(CONTADOR, "w") as f:
-            f.write(str(n))
+        with open(USO, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now().isoformat(), "texto": texto, "lang": lang, "via": via}, ensure_ascii=False) + "\n")
     except Exception:
         pass
+
+def leer_uso():
+    try:
+        with open(USO, encoding="utf-8") as f:
+            return [json.loads(l) for l in f if l.strip()]
+    except Exception:
+        return []
 
 def guardar_aviso(texto, categoria="Avisos"):
     nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + categoria + ".txt"
@@ -111,7 +118,7 @@ def router(msg, hist, state, lang_pref):
         state["pending"] = False
         if texto == CLAVE_ADMIN:
             state["active"] = True
-            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual y lo publico al instante. Escribe SALIR para cerrar.", None, state
+            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o graba una nota de voz en el panel) y lo publico al instante. Escribe SALIR para cerrar.", None, state
         return "❌ Clave incorrecta.", None, state
     if state.get("active"):
         if texto.upper() == "SALIR":
@@ -122,7 +129,6 @@ def router(msg, hist, state, lang_pref):
     if "administraci" in texto.lower():
         state["pending"] = True
         return "🔐 Para entrar al modo de administración, escribe la clave de acceso.", None, state
-    sumar_pregunta()
     pregunta = normalizar_faq(texto)
     suf = {"es": "\n(Responde en español.)", "en": "\n(Answer in English.)", "fr": "\n(Réponds en français.)"}.get(lang_pref, "")
     try:
@@ -148,13 +154,16 @@ async def producir_audio(respuesta, lang):
 @app.post("/api/chat")
 async def api_chat(req: Request):
     d = await req.json()
+    st = d.get("state") or {}
+    if not (st.get("active") or st.get("pending")):
+        log_uso(d.get("msg", ""), d.get("lang", "auto"), "texto")
     try:
-        respuesta, lang, state = router(d.get("msg"), d.get("hist"), d.get("state"), d.get("lang", "auto"))
+        respuesta, lang, state = router(d.get("msg"), d.get("hist"), st, d.get("lang", "auto"))
         audio = await producir_audio(respuesta, lang)
     except Exception as e:
         respuesta = f"⚠️ Error interno: {type(e).__name__}: {e}"
         audio = None
-        state = d.get("state") or {}
+        state = st
     return {"reply": respuesta, "audio": audio, "state": state}
 
 @app.post("/api/voice")
@@ -163,15 +172,47 @@ async def api_voice(audio: UploadFile = File(...), hist: str = Form("[]"), state
     texto, _ = transcribir(data)
     if not texto:
         return {"texto": "", "reply": "⚠️ No logré escuchar bien. Intenta de nuevo más cerca del micrófono.", "audio": None, "state": state}
-    import json as _json
-    respuesta, lang2, state2 = router(texto, _json.loads(hist), _json.loads(state), lang)
+    st = json.loads(state)
+    if not (st.get("active") or st.get("pending")):
+        log_uso(texto, lang, "voz")
+    respuesta, lang2, state2 = router(texto, json.loads(hist), st, lang)
     aud = await producir_audio(respuesta, lang2)
     return {"texto": texto, "reply": respuesta, "audio": aud, "state": state2}
+
+@app.post("/api/voice_note")
+async def voice_note(audio: UploadFile = File(...), categoria: str = Form("Avisos")):
+    data = await audio.read()
+    texto, _ = transcribir(data)
+    if not texto:
+        return {"estado": "⚠️ No logré escuchar la nota."}
+    nuevo, resp = guardar_aviso(texto, categoria)
+    return {"estado": f"✅ Nota de voz publicada: {nuevo}. {resp}"}
 
 @app.post("/api/unlock")
 async def api_unlock(req: Request):
     d = await req.json()
     return {"ok": d.get("clave") == CLAVE_ADMIN}
+
+@app.post("/api/report")
+async def report(req: Request):
+    d = await req.json()
+    if d.get("clave") != CLAVE_ADMIN:
+        return {"error": "❌ Clave incorrecta"}
+    lines = leer_uso()
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    c = Counter(normalizar_faq(l["texto"]) for l in lines if l.get("texto"))
+    idi = Counter(l.get("lang", "auto") for l in lines)
+    return {
+        "total": len(lines),
+        "hoy": sum(1 for l in lines if l.get("ts", "").startswith(hoy)),
+        "top": c.most_common(10),
+        "idiomas": dict(idi),
+    }
+
+@app.get("/api/topfaq")
+async def topfaq():
+    c = Counter(normalizar_faq(l["texto"]) for l in leer_uso() if l.get("texto"))
+    return [{"q": q, "n": n} for q, n in c.most_common(4)]
 
 @app.post("/api/upload")
 async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("1")):
@@ -192,6 +233,37 @@ async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avi
         f.write(cab + texto)
     resp = github_subir(f"datos_bot/{nuevo}", (cab + texto).encode("utf-8"))
     return {"estado": f"✅ Guardado como {nuevo}. {resp}"}
+
+@app.post("/api/conv/save")
+async def conv_save(req: Request):
+    d = await req.json()
+    cid = re.sub(r"[^a-zA-Z0-9_-]", "", d.get("id", ""))[:40] or "c"
+    with open(os.path.join(CONVS, cid + ".json"), "w", encoding="utf-8") as f:
+        json.dump({"id": cid, "titulo": d.get("titulo", "Conversación"), "fecha": datetime.now().isoformat(), "msgs": d.get("msgs", [])}, f, ensure_ascii=False)
+    return {"ok": True}
+
+@app.get("/api/conv/list")
+async def conv_list():
+    out = []
+    for fn in os.listdir(CONVS):
+        if fn.endswith(".json"):
+            try:
+                with open(os.path.join(CONVS, fn), encoding="utf-8") as f:
+                    d = json.load(f)
+                out.append({"id": d["id"], "titulo": d.get("titulo", "Conversación"), "fecha": d.get("fecha", "")})
+            except Exception:
+                pass
+    out.sort(key=lambda x: x["fecha"], reverse=True)
+    return out[:30]
+
+@app.get("/api/conv/get")
+async def conv_get(id: str = ""):
+    cid = re.sub(r"[^a-zA-Z0-9_-]", "", id)[:40]
+    p = os.path.join(CONVS, cid + ".json")
+    if os.path.exists(p):
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
 @app.get("/api/docs")
 async def api_docs():
@@ -230,14 +302,20 @@ PAGINA = """
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
-  .wrap { max-width: 960px; margin: 0 auto; height: 100vh; display: flex; flex-direction: column; }
+  .wrap { max-width: 1200px; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
+  #side { width: 260px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  #side b { font-size: 14px; }
+  #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; }
+  #side button:hover { background: rgba(255,255,255,.25); }
+  main { flex: 1; display: flex; flex-direction: column; height: 100vh; }
   header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
   header img { width: 54px; height: 54px; background: #fff; border-radius: 12px; padding: 3px; }
   header h1 { font-size: 17px; } header p { font-size: 12px; opacity: .85; }
   .langs { display: flex; gap: 5px; margin-left: 14px; }
   .langs button { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: transparent; color: #fff; cursor: pointer; }
   .langs button.on { background: #f7941d; border-color: #f7941d; font-weight: 700; }
-  .hbtn { margin-left: auto; background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; }
+  .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; }
+  #nuevo { margin-left: auto; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
   .msg.user { align-self: flex-end; align-items: flex-end; }
@@ -260,10 +338,13 @@ PAGINA = """
   #inp { flex: 1; border: 1px solid #cfd8dc; border-radius: 999px; padding: 12px 18px; font-size: 15px; outline: none; }
   #inp:focus { border-color: #00855f; }
   #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: #f7941d; color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; }
-  #gear { position: fixed; right: 10px; top: 74px; background: rgba(0,0,0,.25); border: none; color: #fff; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; }
-  #drawer { display: none; background: #fff; margin: 0 12px 8px; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 13px; }
-  #drawer input, #drawer select { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
-  #drawer button { margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #00684a; color: #fff; cursor: pointer; }
+  #gear { position: fixed; right: 10px; top: 74px; background: rgba(0,0,0,.25); border: none; color: #fff; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; z-index: 5; }
+  #convs { display: none; }
+  .drawer { display: none; background: #fff; margin: 0 12px 8px; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 13px; max-height: 45vh; overflow-y: auto; }
+  .drawer input { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
+  .drawer button { margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #00684a; color: #fff; cursor: pointer; }
+  .drawer .item { display: block; width: 100%; background: #f2f4f7; color: #222; margin: 4px 0; text-align: left; }
+  @media (max-width: 900px) { #side { display: none; } #convs { display: block; } }
   @media (min-width: 900px) {
     .bub { font-size: 16.5px; }
     header h1 { font-size: 21px; }
@@ -275,52 +356,70 @@ PAGINA = """
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <img src="/logo.png" alt="logo">
-    <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas de la UABC en Mexicali · es · en · fr</p></div>
-    <div class="langs">
-      <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
+  <aside id="side">
+    <b>🗂️ Conversaciones</b>
+    <button id="nueva">➕ Nueva conversación</button>
+    <div id="lista"></div>
+  </aside>
+  <main>
+    <header>
+      <img src="/logo.png" alt="logo">
+      <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas de la UABC en Mexicali · es · en · fr</p></div>
+      <div class="langs">
+        <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
+      </div>
+      <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
+      <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
+    </header>
+    <button id="gear" title="Personal autorizado">⚙️</button>
+    <div id="cdrawer" class="drawer"><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="chat"></div>
+    <div id="drawer" class="drawer">
+      <b>🛠️ Panel de personal</b>
+      <input id="clave" type="password" placeholder="Clave de acceso">
+      <button id="unlock">🔓 Entrar</button>
+      <div id="zona" style="display:none">
+        <input id="fcat" placeholder="Categoría (Avisos, Horarios, TSU...)">
+        <input id="fvig" placeholder="Vigente hasta (dd/mm/aaaa)">
+        <input id="ffile" type="file">
+        <button id="fsubir">📤 Subir documento</button>
+        <button id="nota">🎤 Grabar nota de voz</button>
+        <button id="rep">📊 Reporte de uso</button>
+        <div id="fest"></div>
+      </div>
     </div>
-    <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
-  </header>
-  <button id="gear" title="Personal autorizado">⚙️</button>
-  <div id="chat"></div>
-  <div id="drawer">
-    <b>🛠️ Panel de personal</b>
-    <input id="clave" type="password" placeholder="Clave de acceso">
-    <button id="unlock">🔓 Entrar</button>
-    <div id="zona" style="display:none">
-      <input id="fcat" placeholder="Categoría (Avisos, Horarios, TSU...)">
-      <input id="fvig" placeholder="Vigente hasta (dd/mm/aaaa)">
-      <input id="ffile" type="file">
-      <button id="fsubir">📤 Subir y enseñar al bot</button>
-      <div id="fest"></div>
+    <div class="bar">
+      <button id="mic">🎤</button>
+      <input id="inp" placeholder="Escribe o dime tu pregunta…">
+      <button id="send">➤</button>
     </div>
-  </div>
-  <div class="bar">
-    <button id="mic">🎤</button>
-    <input id="inp" placeholder="Escribe o dime tu pregunta…">
-    <button id="send">➤</button>
-  </div>
+  </main>
 </div>
 <script>
-let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, chunks = [];
+let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid();
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
-const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function bubble(role, text, audio){
   const d = document.createElement('div'); d.className = 'msg ' + role;
   let h = '<div class="bub">' + esc(text) + '</div>';
   if (audio) h += '<audio controls src="' + audio + '"></audio>';
   d.innerHTML = h; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
 }
-function welcome(){
+async function welcome(){
+  let opts = [
+    {q:"¿Cuántos créditos necesito para titularme en Traducción?", t:"💳 Créditos para titularme"},
+    {q:"¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t:"📅 Horarios del CEC"},
+    {q:"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t:"🎓 Requisitos de admisión"},
+    {q:"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t:"🏛️ Carreras y TSU"}
+  ];
+  try {
+    const d = await (await fetch('/api/topfaq')).json();
+    if (d && d.length) opts = d.map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+  } catch(e) {}
   const d = document.createElement('div'); d.className = 'msg bot';
-  d.innerHTML = '<div class="bub">👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.'
-    + '<div class="opts">'
-    + '<button data-q="¿Cuántos créditos necesito para titularme en Traducción?">💳 Créditos para titularme</button>'
-    + '<button data-q="¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?">📅 Horarios del CEC</button>'
-    + '<button data-q="¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?">🎓 Requisitos de admisión</button>'
-    + '<button data-q="¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?">🏛️ Carreras y TSU</button>'
+  d.innerHTML = '<div class="bub">👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.<div class="opts">'
+    + opts.map(o => '<button data-q="' + esc(o.q) + '">' + esc(o.t) + '</button>').join('')
     + '</div><span class="nota">Personal docente: escribe o di "administración".</span></div>';
   chat.appendChild(d);
   d.querySelectorAll('[data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
@@ -333,20 +432,46 @@ function thinking(){
   chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
 }
 function removeThink(){ const t = document.getElementById('think'); if (t) t.remove(); }
-welcome();
+function saveConv(){
+  const titulo = ((hist.find(m => m.role === 'user') || {}).content || 'Nueva conversación').slice(0, 40);
+  fetch('/api/conv/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: currentId, titulo, msgs: hist})}).then(() => loadList());
+}
+async function loadList(){
+  const d = await (await fetch('/api/conv/list')).json();
+  const html = d.map(c => '<button class="item" data-id="' + c.id + '">' + esc(c.titulo) + '</button>').join('');
+  document.getElementById('lista').innerHTML = html || '<small>Sin conversaciones aún.</small>';
+  document.getElementById('lista2').innerHTML = html || '<small>Sin conversaciones aún.</small>';
+  document.querySelectorAll('[data-id]').forEach(b => b.onclick = () => openConv(b.dataset.id));
+}
+async function openConv(id){
+  const d = await (await fetch('/api/conv/get?id=' + id)).json();
+  if (!d.msgs) return;
+  currentId = id; hist = d.msgs; state = {pending:false, active:false};
+  chat.innerHTML = '';
+  hist.forEach(m => bubble(m.role, m.content, m.audio));
+  document.getElementById('cdrawer').style.display = 'none';
+}
+function nueva(){
+  currentId = uid(); hist = []; state = {pending:false, active:false};
+  chat.innerHTML = ''; welcome(); loadList();
+  document.getElementById('cdrawer').style.display = 'none';
+}
 async function send(msg){
   if (!msg.trim()) return;
   bubble('user', msg); hist.push({role:'user', content: msg}); inp.value = '';
   thinking();
   const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg, hist: hist.slice(-7), state, lang: langPref})});
   const d = await r.json(); removeThink(); state = d.state;
-  hist.push({role:'assistant', content: d.reply}); bubble('bot', d.reply, d.audio);
+  hist.push({role:'assistant', content: d.reply, audio: d.audio}); bubble('bot', d.reply, d.audio);
+  saveConv();
 }
 document.getElementById('send').onclick = () => send(inp.value);
 inp.onkeydown = e => { if (e.key === 'Enter') send(inp.value); };
-document.getElementById('nuevo').onclick = () => { hist = []; state = {pending:false, active:false}; chat.innerHTML = ''; welcome(); };
+document.getElementById('nuevo').onclick = nueva;
+document.getElementById('nueva').onclick = nueva;
+document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
-  document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
+  document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on')); };
 });
 const mic = document.getElementById('mic');
 mic.onclick = async () => {
@@ -365,7 +490,8 @@ mic.onclick = async () => {
     const d = await (await fetch('/api/voice', {method:'POST', body: fd})).json();
     removeThink(); state = d.state;
     if (d.texto) { bubble('user', '🎤 ' + d.texto); hist.push({role:'user', content: d.texto}); }
-    if (d.reply) { bubble('bot', d.reply, d.audio); hist.push({role:'assistant', content: d.reply}); }
+    if (d.reply) { bubble('bot', d.reply, d.audio); hist.push({role:'assistant', content: d.reply, audio: d.audio}); }
+    saveConv();
   };
   rec.start(); mic.classList.add('rec');
 };
@@ -386,6 +512,29 @@ document.getElementById('fsubir').onclick = async () => {
   const d = await (await fetch('/api/upload', {method:'POST', body: fd})).json();
   document.getElementById('fest').innerText = d.estado;
 };
+document.getElementById('nota').onclick = async () => {
+  if (rec2 && rec2.state === 'recording') { rec2.stop(); return; }
+  const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+  let ch = []; rec2 = new MediaRecorder(stream);
+  rec2.ondataavailable = e => ch.push(e.data);
+  rec2.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    const fd = new FormData();
+    fd.append('audio', new Blob(ch, {type:'audio/webm'}), 'nota.webm');
+    fd.append('categoria', document.getElementById('fcat').value || 'Avisos');
+    const d = await (await fetch('/api/voice_note', {method:'POST', body: fd})).json();
+    document.getElementById('fest').innerText = d.estado;
+  };
+  rec2.start();
+  document.getElementById('fest').innerText = '🔴 Grabando nota… toca de nuevo para terminar.';
+};
+document.getElementById('rep').onclick = async () => {
+  const d = await (await fetch('/api/report', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})})).json();
+  if (d.error) return alert(d.error);
+  document.getElementById('fest').innerText = '📊 Total: ' + d.total + ' · Hoy: ' + d.hoy + ' · Idiomas: ' + JSON.stringify(d.idiomas)
+    + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
+};
+welcome(); loadList();
 </script>
 </body>
 </html>
