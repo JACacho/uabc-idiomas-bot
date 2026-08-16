@@ -18,10 +18,12 @@ LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://codeberg.org/uabc-bot/uabc-idiomas-bot/raw/main/logo.png"
 
 CSS = """
-.gradio-container { max-width: 720px !important; }
+.gradio-container { max-width: 760px !important; }
 footer { display: none !important; }
 .gr-row { align-items: center !important; }
-#chat-wa { background: #ece5dd; border-radius: 14px; padding: 8px; }
+#chat-wa { background: #e9e0d7; border-radius: 18px; padding: 10px; box-shadow: inset 0 1px 4px rgba(0,0,0,.08); }
+#inputbar { border-radius: 22px !important; box-shadow: 0 2px 10px rgba(0,0,0,.10); }
+#inputbar .textbox { border-radius: 999px !important; }
 """
 
 BIENVENIDA = [{"role": "assistant", "content": "👋 ¡Hola! Soy *UABCBot Idiomas*, el asistente de la Facultad de Idiomas UABC. Toca una opción abajo o escribe/dime tu pregunta en español, inglés o francés. (Personal docente: escribe o di *administración*)."}]
@@ -202,13 +204,13 @@ with gr.Blocks(title="UABCBot Idiomas UABC") as demo:
     if os.path.exists(LOGO):
         with gr.Row():
             gr.Image(value=LOGO, width=110, interactive=False, show_label=False, scale=1)
-            gr.Markdown("### 🎓 UABCBot Idiomas — Facultad de Idiomas UABC\nEscríbeme o háblame en español, inglés o francés.", scale=5)
+            gr.Markdown("### 🎓 UABCBot Idiomas — Facultad de Idiomas UABC\nAsistente oficial trilingüe (español · inglés · francés).", scale=5)
     else:
         gr.Markdown("### 🎓 UABCBot Idiomas — Facultad de Idiomas UABC")
     try:
-        chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa", type="messages")
+        chatbot = gr.Chatbot(value=BIENVENIDA, height=480, elem_id="chat-wa", type="messages")
     except TypeError:
-        chatbot = gr.Chatbot(value=BIENVENIDA, height=460, elem_id="chat-wa")
+        chatbot = gr.Chatbot(value=BIENVENIDA, height=480, elem_id="chat-wa")
     audio_out = gr.Audio(label="🔊 Nota de voz de la respuesta (toca play aquí)", type="filepath")
     with gr.Row():
         q1 = gr.Button("💳 Créditos para titularme", size="sm")
@@ -217,10 +219,13 @@ with gr.Blocks(title="UABCBot Idiomas UABC") as demo:
     with gr.Row():
         q4 = gr.Button("🏛️ Carreras y TSU", size="sm")
         btn_nuevo = gr.Button("🧹 Nueva conversación", size="sm")
-    with gr.Row():
-        txt = gr.Textbox(label="✏️ Escribe o dime tu pregunta", placeholder="Escribe o dime tu pregunta…", scale=5)
-        voz = gr.Audio(sources=["microphone"], type="filepath", show_label=False, scale=1)
-        btn_txt = gr.Button("Enviar ➤", variant="primary", scale=1)
+    with gr.Group(elem_id="inputbar"):
+        with gr.Row():
+            voz = gr.Audio(sources=["microphone"], type="filepath", show_label=False, scale=1)
+            txt = gr.Textbox(placeholder="Escribe o dime tu pregunta…", show_label=False, scale=5)
+            btn_txt = gr.Button("➤", variant="primary", scale=1)
+        with gr.Row():
+            btn_voz = gr.Button("🎤 Enviar mi mensaje de voz", size="sm")
     with gr.Accordion("🛠️ Panel de archivos (personal autorizado)", open=False):
         clave_in = gr.Textbox(label="Clave de acceso", type="password")
         btn_clave = gr.Button("🔓 Entrar")
@@ -249,11 +254,11 @@ with gr.Blocks(title="UABCBot Idiomas UABC") as demo:
 
     btn_txt.click(router, [txt, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     txt.submit(router, [txt, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
-    voz.stop_recording(procesar_voz, [voz, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
+    btn_voz.click(procesar_voz, [voz, chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     q1.click(rapida("¿Cuántos créditos necesito para titularme en Traducción?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     q2.click(rapida("¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     q3.click(rapida("¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     q4.click(rapida("¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"), [chatbot, estado_admin], [chatbot, audio_out, estado_admin])
     btn_nuevo.click(limpiar_chat, None, [chatbot, audio_out, estado_admin])
 
-demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)), theme=gr.themes.Soft(), css=CSS)
+demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)), theme=gr.themes.Soft(primary_hue=gr.themes.colors.green), css=CSS)
