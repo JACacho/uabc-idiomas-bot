@@ -23,6 +23,17 @@ OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-DeniseNeural"}
 
+MEMORIA_OFICIAL = [
+    (["credito", "titular"],
+     "Para titularte en la Licenciatura en Traducción (LT) de la Facultad de Idiomas de la UABC necesitas un total de 349 créditos: 237 de materias obligatorias, 102 de materias optativas y 10 de prácticas profesionales. Para más detalles consulta idiomas.mxl.uabc.mx o llama al 686-689-0825."),
+    (["horario", "cec"],
+     "El Centro de Enseñanza de Lenguas (CEC) ofrece cursos en formatos semanal, sabatino, intensivo e intersemestral, con horarios matutinos, vespertinos y nocturnos. Los grupos exactos de cada periodo se publican en la convocatoria vigente en cecuabc.com y lenguasextranjeras.uabc.mx. Informes: recepcionmxl@uabc.edu.mx o al 686 841-82-91 ext. 300."),
+    (["admision", "requisito"],
+     "Para ingresar a la Facultad de Idiomas necesitas: 1) concluir el bachillerato con promedio aprobatorio, 2) certificado de bachillerato, acta de nacimiento y CURP, 3) registrarte en el portal de admisiones cuando abra la convocatoria (dos veces al año: en agosto y en enero), y 4) presentar el Examen de Selección institucional. No se requiere inglés avanzado: la Facultad te forma desde cero hasta nivel profesional. Fechas exactas en admision.uabc.mx."),
+    (["carrera", "tsu", "tecnico"],
+     "La Facultad de Idiomas ofrece dos licenciaturas: Enseñanza de Lenguas (LEL) y Traducción (LT), además del Técnico Superior Universitario (TSU), una opción de nivel superior con enfoque práctico y rápida salida al campo laboral. Consulta la convocatoria vigente en idiomas.mxl.uabc.mx o llama al 686-689-0825 para confirmar la especialidad del ciclo actual."),
+]
+
 def detectar_idioma(texto):
     t = (texto or "").lower()
     fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits", "je", "étudier", "français"]
@@ -88,24 +99,19 @@ def sistema_prompt(contexto):
 def llamar_gemini(sp, hist, pregunta):
     if not cliente_gemini:
         return None
-    for intento in (1, 2):
-        try:
-            contents = []
-            for m in hist:
-                contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
-            contents.append({"role": "user", "parts": [{"text": pregunta}]})
-            r = cliente_gemini.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=contents,
-                config=types.GenerateContentConfig(system_instruction=sp, temperature=0.1),
-            )
-            t = (r.text or "").strip()
-            if t:
-                return t
-        except Exception:
-            if intento == 1:
-                time.sleep(1)
-    return None
+    try:
+        contents = []
+        for m in hist:
+            contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
+        contents.append({"role": "user", "parts": [{"text": pregunta}]})
+        r = cliente_gemini.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(system_instruction=sp, temperature=0.1),
+        )
+        return (r.text or "").strip() or None
+    except Exception:
+        return None
 
 def llamar_openai(sp, hist, pregunta, url, key, modelos):
     if not key:
@@ -117,7 +123,7 @@ def llamar_openai(sp, hist, pregunta, url, key, modelos):
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json={"model": modelo, "messages": msgs, "temperature": 0.1},
-                timeout=30,
+                timeout=20,
             )
             d = r.json()
             t = (d["choices"][0]["message"]["content"] or "").strip()
@@ -146,7 +152,11 @@ def _es_cacheable(texto):
     return not (texto.startswith("⚠️") or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t)
 
 def responder(pregunta, historial):
-    clave = (pregunta or "").strip().lower()[:120]
+    p = (pregunta or "").lower()
+    for claves, respuesta_oficial in MEMORIA_OFICIAL:
+        if any(k in p for k in claves):
+            return respuesta_oficial, detectar_idioma(pregunta)
+    clave = p.strip()[:120]
     cache = _cargar_cache()
     if clave in cache:
         return cache[clave][0], cache[clave][1]
@@ -158,9 +168,9 @@ def responder(pregunta, historial):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
     texto = llamar_gemini(sp, hist, pregunta)
     if not texto:
-        texto = llamar_openai(sp, hist, pregunta, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"])
+        texto = llamar_openai(sp, hist, pregunta, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, ["llama-3.3-70b-versatile"])
     if not texto:
-        texto = llamar_openai(sp, hist, pregunta, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, ["meta-llama/llama-3.3-70b-instruct:free", "google/gemma-3-27b-it:free", "mistralai/mistral-7b-instruct:free"])
+        texto = llamar_openai(sp, hist, pregunta, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, ["meta-llama/llama-3.3-70b-instruct:free"])
     if not texto:
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
