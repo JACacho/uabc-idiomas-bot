@@ -49,14 +49,22 @@ def fecha_hoy_es():
 
 def _fechas_doc(texto):
     fechas = []
-    for d, m, y in re.findall(r"(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{4})", (texto or "").lower()):
+    t = (texto or "").lower()
+    for d, m, y in re.findall(r"(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{4})", t):
         mes = MESES_INV.get(m)
         if mes:
             try:
                 fechas.append(date(int(y), mes, int(d)))
             except Exception:
                 pass
-    for d, m, y in re.findall(r"(\d{1,2})/(\d{1,2})/(\d{4})", texto or ""):
+    for d, m in re.findall(r"(\d{1,2})\s+de\s+([a-záéíóúñ]+)(?!\s+de\s+\d{4})", t):
+        mes = MESES_INV.get(m)
+        if mes:
+            try:
+                fechas.append(date(date.today().year, mes, int(d)))
+            except Exception:
+                pass
+    for d, m, y in re.findall(r"(\d{1,2})/(\d{1,2})/(\d{4})", t):
         try:
             fechas.append(date(int(y), int(m), int(d)))
         except Exception:
@@ -112,6 +120,13 @@ def _limpiar_doc(texto):
 def _tokens(t):
     return set(re.findall(r"[a-záéíóúñü]+", (t or "").lower()))
 
+def _es_valida(t):
+    if not t:
+        return False
+    if t.strip().endswith("?") and len(t) < 160:
+        return False
+    return True
+
 def cargar_contexto(pregunta):
     partes = []
     try:
@@ -146,7 +161,8 @@ def sistema_prompt(contexto):
     return (
         f"Hoy es {fecha_hoy_es()}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
         "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales, claros y concisos (máximo ~120 palabras salvo que pidan detalle). "
-        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy; NUNCA cites fechas que ya pasaron ni te contradigas; si no hay eventos próximos, dilo y menciona la siguiente fecha importante futura. "
+        "NUNCA repitas la pregunta del usuario ni respondas con otra pregunta; entrega siempre información concreta. "
+        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy (con fecha, hora y lugar si los tienes); NUNCA cites fechas que ya pasaron ni te contradigas; si no hay eventos próximos, dilo y menciona la siguiente fecha importante futura. "
         "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
         "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
         "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
@@ -228,13 +244,13 @@ def responder(pregunta, historial, lang_pref="auto"):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
     texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
-    if not texto:
+    if not _es_valida(texto):
         texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final)
-    if not texto:
+    if not _es_valida(texto):
         texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "meta-llama/llama-3.3-70b-instruct:free"])
-    if not texto:
+    if not _es_valida(texto):
         texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
-    if not texto:
+    if not _es_valida(texto):
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
     if _es_cacheable(texto):
