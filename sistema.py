@@ -7,6 +7,7 @@ import tempfile
 import requests
 from datetime import datetime, date, timedelta
 from google import genai as genai_lib
+from google.genai import types as gtypes
 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
@@ -280,7 +281,7 @@ def transcribir(audio_bytes):
                 r = cliente.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=[
-                        {"inline_data": {"data": audio_bytes, "mime_type": mime}},
+                        gtypes.Part(inline_data=gtypes.Blob(data=audio_bytes, mime_type=mime)),
                         "Transcribe textualmente este audio (español, inglés o francés). Devuelve solo la transcripción.",
                     ],
                 )
@@ -296,19 +297,20 @@ def transcribir(audio_bytes):
 
 def extraer_imagen(data, mime="image/jpeg"):
     for cliente in _clientes_gemini():
-        try:
-            r = cliente.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[
-                    {"inline_data": {"data": data, "mime_type": mime}},
-                    "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios.",
-                ],
-            )
-            t = (r.text or "").strip()
-            if t:
-                return t
-        except Exception:
-            continue
+        for intento in (1, 2):
+            try:
+                r = cliente.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[
+                        gtypes.Part(inline_data=gtypes.Blob(data=data, mime_type=mime)),
+                        "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios.",
+                    ],
+                )
+                t = (r.text or "").strip()
+                if t:
+                    return t
+            except Exception:
+                time.sleep(1)
     return ""
 
 async def generar_voz(texto, lang):
