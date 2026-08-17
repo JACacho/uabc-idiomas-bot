@@ -6,12 +6,26 @@ import asyncio
 import tempfile
 import requests
 from datetime import datetime
-from google.genai import types
+from google import genai as genai_lib
 
-try:
-    from config import client as cliente_gemini
-except Exception:
-    cliente_gemini = None
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
+
+def _mk_client(k):
+    if not k:
+        return None
+    try:
+        return genai_lib.Client(api_key=k)
+    except Exception:
+        return None
+
+cliente_gemini = _mk_client(GEMINI_KEY)
+cliente_gemini2 = _mk_client(GEMINI_KEY_2)
+
+def _clientes_gemini():
+    for c in (cliente_gemini, cliente_gemini2):
+        if c:
+            yield c
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
@@ -20,38 +34,40 @@ CACHE = os.path.join(BASE, "cache.json")
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OR_URL = "https://openrouter.ai/api/v1/chat/completions"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-DeniseNeural"}
 
 MEMORIA_OFICIAL = [
-    (["credito", "titular"], {
+    (["credito", "titular", "credit"], {
         "es": "Para titularte en la Licenciatura en Traducción (LT) de la Facultad de Idiomas de la UABC necesitas un total de 349 créditos: 237 de materias obligatorias, 102 de materias optativas y 10 de prácticas profesionales. Para más detalles consulta idiomas.mxl.uabc.mx o llama al 686-689-0825.",
         "en": "To graduate from the Translation Bachelor's (LT) at the UABC Faculty of Languages you need 349 credits: 237 mandatory, 102 electives and 10 professional internships. Details at idiomas.mxl.uabc.mx or call 686-689-0825.",
         "fr": "Pour obtenir votre diplôme en Traduction (LT) à la Faculté de Langues de l'UABC, il faut 349 crédits : 237 obligatoires, 102 optionnels et 10 de stages. Détails sur idiomas.mxl.uabc.mx ou au 686-689-0825."}),
-    (["frances", "francés", "french", "français", "ingles", "inglés", "english", "study", "estudiar", "curso", "cec", "horario"], {
+    (["carrera", "tsu", "tecnico", "técnico", "programas", "traduc", "translation", "traduction"], {
+        "es": "La Facultad de Idiomas ofrece dos licenciaturas: Enseñanza de Lenguas (LEL) y Traducción (LT), además del Técnico Superior Universitario (TSU), una opción con enfoque práctico y rápida salida al campo laboral. Consulta la convocatoria vigente en idiomas.mxl.uabc.mx o llama al 686-689-0825.",
+        "en": "The Faculty of Languages offers two bachelor's degrees: Language Teaching (LEL) and Translation (LT), plus a Higher University Technician (TSU) program with a practical focus and quick entry to the job market. To study Translation, check the current call at idiomas.mxl.uabc.mx or call 686-689-0825.",
+        "fr": "La Faculté de Langues propose deux licences : Enseignement des Langues (LEL) et Traduction (LT), ainsi qu'un Technicien Supérieur Universitaire (TSU), option pratique avec insertion rapide sur le marché du travail. Pour étudier la traduction, consultez l'appel en cours sur idiomas.mxl.uabc.mx ou appelez le 686-689-0825."}),
+    (["frances", "francés", "french", "français", "francais", "ingles", "inglés", "english", "anglais", "study", "estudiar", "etud", "curso", "cours", "cec", "horario"], {
         "es": "El Centro de Enseñanza de Lenguas (CEC) ofrece cursos de inglés, francés, alemán, italiano, portugués, ruso, chino mandarín, japonés, coreano y español para extranjeros, en formatos semanal, sabatino, intensivo e intersemestral, con horarios matutinos, vespertinos y nocturnos. Los grupos de cada periodo se publican en cecuabc.com. Informes: recepcionmxl@uabc.edu.mx o al 686 841-82-91 ext. 300.",
         "en": "The Language Teaching Center (CEC) offers courses in English, French, German, Italian, Portuguese, Russian, Mandarin, Japanese, Korean and Spanish for foreigners, in weekly, Saturday, intensive and inter-semester formats, morning, afternoon and evening. Groups are published each term at cecuabc.com. Info: recepcionmxl@uabc.edu.mx or 686 841-82-91 ext. 300.",
         "fr": "Le Centre d'Enseignement des Langues (CEC) propose des cours d'anglais, de français, d'allemand, d'italien, de portugais, de russe, de mandarin, de japonais, de coréen et d'espagnol pour étrangers, en formats hebdomadaire, samedi, intensif et intersemestriel, matin, après-midi et soir. Les groupes sont publiés chaque semestre sur cecuabc.com. Infos : recepcionmxl@uabc.edu.mx ou 686 841-82-91 poste 300."}),
-    (["admision", "requisito"], {
+    (["admision", "requisito", "admission"], {
         "es": "Para ingresar a la Facultad de Idiomas necesitas: 1) concluir el bachillerato con promedio aprobatorio, 2) certificado de bachillerato, acta de nacimiento y CURP, 3) registrarte en el portal de admisiones cuando abra la convocatoria (agosto y enero), y 4) presentar el Examen de Selección institucional. No se requiere inglés avanzado: la Facultad te forma desde cero. Fechas en admision.uabc.mx.",
-        "en": "To enter the Faculty of Languages you need: 1) finish high school with a passing average, 2) high school certificate, birth certificate and CURP, 3) register on the admissions portal when the call opens (August and January), and 4) take the institutional Selection Exam. Advanced English is not required: the Faculty trains you from zero. Dates at admision.uabc.mx.",
-        "fr": "Pour entrer à la Faculté de Langues : 1) terminer le lycée avec une moyenne suffisante, 2) certificat de lycée, acte de naissance et CURP, 3) s'inscrire sur le portail d'admission quand l'appel ouvre (août et janvier), et 4) passer l'Examen de Sélection institutionnel. L'anglais avancé n'est pas requis : la Faculté vous forme depuis zéro. Dates sur admision.uabc.mx."}),
-    (["carrera", "tsu", "tecnico", "técnico", "programas"], {
-        "es": "La Facultad de Idiomas ofrece dos licenciaturas: Enseñanza de Lenguas (LEL) y Traducción (LT), además del Técnico Superior Universitario (TSU), una opción con enfoque práctico y rápida salida al campo laboral. Consulta la convocatoria vigente en idiomas.mxl.uabc.mx o llama al 686-689-0825.",
-        "en": "The Faculty of Languages offers two bachelor's degrees: Language Teaching (LEL) and Translation (LT), plus a Higher University Technician (TSU) program with a practical focus and quick entry to the job market. Check the current call at idiomas.mxl.uabc.mx or call 686-689-0825.",
-        "fr": "La Faculté de Langues propose deux licences : Enseignement des Langues (LEL) et Traduction (LT), ainsi qu'un Technicien Supérieur Universitaire (TSU), option pratique avec insertion rapide sur le marché du travail. Consultez l'appel en cours sur idiomas.mxl.uabc.mx ou appelez le 686-689-0825."}),
+        "en": "To enter the Faculty of Languages you need: 1) finish high school with a passing average, 2) high school certificate, birth certificate and CURP, 3) register on the admissions portal when the call opens (August and January), and 4) take the institutional Selection Exam. Advanced English is not required. Dates at admision.uabc.mx.",
+        "fr": "Pour entrer à la Faculté de Langues : 1) terminer le lycée avec une moyenne suffisante, 2) certificat de lycée, acte de naissance et CURP, 3) s'inscrire sur le portail d'admission (août et janvier), et 4) passer l'Examen de Sélection. L'anglais avancé n'est pas requis. Dates sur admision.uabc.mx."}),
     (["que haces", "what do you do", "ayudar", "help", "sirves", "puedes hacer"], {
         "es": "Puedo informarte sobre créditos y planes de estudio, cursos y horarios del CEC, requisitos de admisión, carreras y TSU, y avisos o fechas oficiales de la Facultad de Idiomas de la UABC en Mexicali, en español, inglés o francés, por texto o por voz. ¿Qué te gustaría saber?",
         "en": "I can help you with credits and study plans, CEC courses and schedules, admission requirements, degrees and TSU, and official notices and dates of the UABC Faculty of Languages in Mexicali, in Spanish, English or French, by text or voice. What would you like to know?",
-        "fr": "Je peux vous renseigner sur les crédits et plans d'études, les cours et horaires du CEC, les conditions d'admission, les licences et le TSU, ainsi que les avis et dates officielles de la Faculté de Langues de l'UABC à Mexicali, en espagnol, anglais ou français, par texte ou par voix. Que souhaitez-vous savoir ?"}),
+        "fr": "Je peux vous renseigner sur les crédits et plans d'études, les cours et horaires du CEC, les conditions d'admission, les licences et le TSU, ainsi que les avis et dates officielles de la Faculté de Langues de l'UABC à Mexicali, en espagnol, anglais ou français. Que souhaitez-vous savoir ?"}),
 ]
 
 def detectar_idioma(texto):
     t = (texto or "").lower()
-    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits", "je", "étudier", "français", "francais", "aime", "voudrais", "quel", "quelle", "les", "des", "est"]
-    en = ["hello", "thank", "how", "many", "credits", "degree", "translation", "what", "when", "where", "i", "would", "like", "to", "study", "french", "english", "do", "you", "for", "me", "is", "are", "the", "my", "can", "help"]
-    hf = sum(1 for w in fr if re.search(r"\b" + w + r"\b", t))
-    he = sum(1 for w in en if re.search(r"\b" + w + r"\b", t))
+    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôm", "traduction", "salut", "crédit", "je ", "étud", "etud", "français", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les ", "des ", "anglais"]
+    en_st = ["hello", "thank", "how", "many", "credit", "degree", "translation", "what", "when", "where", "i ", "would", "like", "to ", "study", "french", "english", "do ", "you", "for", "me", "is ", "are ", "the ", "my ", "can", "help"]
+    hf = sum(1 for w in fr_st if w in t)
+    he = sum(1 for w in en_st if w in t)
     if hf >= 2 and hf > he:
         return "fr"
     if he >= 2 and he > hf:
@@ -108,18 +124,18 @@ def sistema_prompt(contexto):
         f"\nINFORMACIÓN DISPONIBLE:\n{contexto}"
     )
 
-def llamar_gemini(sp, hist, pregunta):
-    if not cliente_gemini:
+def llamar_gemini(cliente, sp, hist, pregunta):
+    if not cliente:
         return None
     try:
         contents = []
         for m in hist:
             contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
         contents.append({"role": "user", "parts": [{"text": pregunta}]})
-        r = cliente_gemini.models.generate_content(
+        r = cliente.models.generate_content(
             model="gemini-2.5-flash",
             contents=contents,
-            config=types.GenerateContentConfig(system_instruction=sp, temperature=0.1),
+            config={"system_instruction": sp, "temperature": 0.1},
         )
         return (r.text or "").strip() or None
     except Exception:
@@ -135,7 +151,7 @@ def llamar_openai(sp, hist, pregunta, url, key, modelos):
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
                 json={"model": modelo, "messages": msgs, "temperature": 0.1},
-                timeout=20,
+                timeout=15,
             )
             d = r.json()
             t = (d["choices"][0]["message"]["content"] or "").strip()
@@ -161,7 +177,7 @@ def _guardar_cache(c):
 
 def _es_cacheable(texto):
     t = (texto or "").lower()
-    return not (texto.startswith("⚠️") or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
+    return not (texto.startswith("⚠️") or len(texto) < 60 or "ayudarte hoy" in t or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
 
 def responder(pregunta, historial, lang_pref="auto"):
     p = (pregunta or "").lower()
@@ -182,11 +198,14 @@ def responder(pregunta, historial, lang_pref="auto"):
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    texto = llamar_openai(sp, hist, pregunta_final, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, ["llama-3.3-70b-versatile"])
+    # === CASCADA: Gemini 1 → Gemini 2 → OpenRouter → Groq ===
+    texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
     if not texto:
-        texto = llamar_gemini(sp, hist, pregunta_final)
+        texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final)
     if not texto:
-        texto = llamar_openai(sp, hist, pregunta_final, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, ["meta-llama/llama-3.3-70b-instruct:free"])
+        texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "meta-llama/llama-3.3-70b-instruct:free"])
+    if not texto:
+        texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
     if not texto:
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
@@ -200,7 +219,7 @@ def transcribir_groq(data):
         return ""
     try:
         r = requests.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
+            GROQ_URL.replace("/chat/completions", "/audio/transcriptions"),
             headers={"Authorization": f"Bearer {GROQ_KEY}"},
             files={"file": ("voz.webm", data, "audio/webm")},
             data={"model": "whisper-large-v3"},
@@ -211,36 +230,33 @@ def transcribir_groq(data):
         return ""
 
 def transcribir(audio_bytes):
-    if cliente_gemini:
-        for modelo in ("gemini-2.5-flash", "gemini-2.0-flash"):
-            for mime in ("audio/webm", "audio/wav", "audio/mp3", "audio/ogg"):
-                try:
-                    r = cliente_gemini.models.generate_content(
-                        model=modelo,
-                        contents=[
-                            types.Part(inline_data=types.Blob(data=audio_bytes, mime_type=mime)),
-                            "Transcribe textualmente este audio (español, inglés o francés). Devuelve solo la transcripción.",
-                        ],
-                    )
-                    t = (r.text or "").strip()
-                    if t:
-                        return t, detectar_idioma(t)
-                except Exception:
-                    continue
+    for cliente in _clientes_gemini():
+        for mime in ("audio/webm", "audio/wav", "audio/mp3", "audio/ogg"):
+            try:
+                r = cliente.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[
+                        {"inline_data": {"data": audio_bytes, "mime_type": mime}},
+                        "Transcribe textualmente este audio (español, inglés o francés). Devuelve solo la transcripción.",
+                    ],
+                )
+                t = (r.text or "").strip()
+                if t:
+                    return t, detectar_idioma(t)
+            except Exception:
+                continue
     t = transcribir_groq(audio_bytes)
     if t:
         return t, detectar_idioma(t)
     return "", "es"
 
 def extraer_imagen(data, mime="image/jpeg"):
-    if not cliente_gemini:
-        return ""
-    for modelo in ("gemini-2.5-flash", "gemini-2.0-flash"):
+    for cliente in _clientes_gemini():
         try:
-            r = cliente_gemini.models.generate_content(
-                model=modelo,
+            r = cliente.models.generate_content(
+                model="gemini-2.5-flash",
                 contents=[
-                    types.Part(inline_data=types.Blob(data=data, mime_type=mime)),
+                    {"inline_data": {"data": data, "mime_type": mime}},
                     "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios.",
                 ],
             )
