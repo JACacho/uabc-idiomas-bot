@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import base64
 import asyncio
 import tempfile
 import requests
@@ -43,6 +44,8 @@ VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-Denis
 DIAS = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
 MESES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio", 7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
 MESES_INV = {v: k for k, v in MESES.items()}
+
+PROMPT_POSTER = "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios."
 
 def fecha_hoy_es():
     n = datetime.now()
@@ -207,6 +210,29 @@ def llamar_openai(sp, hist, pregunta, url, key, modelos):
             continue
     return None
 
+def llamar_vision(url, key, modelos, b64, mime, prompt):
+    if not key:
+        return ""
+    for modelo in modelos:
+        try:
+            msgs = [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ]}]
+            r = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": modelo, "messages": msgs, "temperature": 0.1},
+                timeout=30,
+            )
+            d = r.json()
+            t = (d["choices"][0]["message"]["content"] or "").strip()
+            if t:
+                return t
+        except Exception:
+            continue
+    return ""
+
 def _cargar_cache():
     try:
         with open(CACHE, encoding="utf-8") as f:
@@ -303,7 +329,7 @@ def extraer_imagen(data, mime="image/jpeg"):
                     model="gemini-2.5-flash",
                     contents=[
                         gtypes.Part(inline_data=gtypes.Blob(data=data, mime_type=mime)),
-                        "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios.",
+                        PROMPT_POSTER,
                     ],
                 )
                 t = (r.text or "").strip()
@@ -311,6 +337,13 @@ def extraer_imagen(data, mime="image/jpeg"):
                     return t
             except Exception:
                 time.sleep(1)
+    b64 = base64.b64encode(data).decode()
+    t = llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"], b64, mime, PROMPT_POSTER)
+    if t:
+        return t
+    t = llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free", "google/gemini-2.0-flash-exp:free"], b64, mime, PROMPT_POSTER)
+    if t:
+        return t
     return ""
 
 async def generar_voz(texto, lang):
