@@ -280,11 +280,11 @@ async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avi
     data = await archivo.read()
     if ext in EXT_IMG:
         mime = "image/png" if ext == ".png" else "image/jpeg"
-        texto = _sist.extraer_imagen(data, mime)
-        if not texto and texto_manual.strip():
-            texto = texto_manual.strip()
+        texto = texto_manual.strip()
         if not texto:
-            return {"estado": "⚠️ Visión saturada: reintenta en un minuto, pega el texto del póster en el cuadro, o usa TXT/PDF."}
+            texto = _sist.extraer_imagen(data, mime)
+        if not texto:
+            return {"estado": "⚠️ La visión está saturada ahora. Pega el texto del póster en el cuadro 📝 y pulsa Subir: se publica al instante."}
         iname = str(uuid.uuid4()) + ext
         with open(os.path.join(IMGS, iname), "wb") as f:
             f.write(data)
@@ -450,6 +450,8 @@ PAGINA = """
   .xbtn { background: #d32f2f !important; float: right; }
   #drop { border: 2px dashed #00855f; border-radius: 12px; padding: 14px; text-align: center; color: #00684a; background: #f2fbf6; margin: 6px 0; cursor: pointer; }
   #dlist { white-space: pre-wrap; background: #f7f9fa; border-radius: 8px; padding: 8px; margin-top: 6px; font-size: 12px; }
+  .etiq { display: block; margin: 8px 0 2px; font-weight: 700; color: #00684a; }
+  .ayuda { font-size: 11.5px; color: #667; margin-bottom: 4px; }
   @media (max-width: 900px) { #side { display: none; } #convs { display: block; } }
   @media (min-width: 900px) {
     .bub { font-size: 16.5px; }
@@ -498,18 +500,24 @@ PAGINA = """
       <button id="unlock">🔓 Entrar</button>
       <button id="salirp">🚪 Salir del panel</button>
       <div id="zona" style="display:none">
+        <span class="etiq">1️⃣ Categoría del aviso</span>
         <select id="fcat">
           <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option>
         </select>
+        <span class="etiq">2️⃣ Vigente hasta (opcional)</span>
         <input id="fvig" type="date">
-        <div id="drop">📥 Arrastra aquí tu documento o póster (TXT, PDF o imagen)<br><small>o toca para elegirlo</small></div>
+        <span class="etiq">3️⃣ Elige o arrastra el archivo (TXT, PDF o imagen)</span>
+        <div id="drop">📥 Arrastra aquí tu documento o póster<br><small>o toca para elegirlo</small></div>
         <input id="ffile" type="file" style="display:none">
-        <textarea id="ftexto" rows="3" placeholder="O pega aquí el texto del póster (plan B si la visión está saturada)"></textarea>
+        <span class="etiq">📝 Texto del póster (plan B recomendado para imágenes)</span>
+        <div class="ayuda">Si subes una IMAGEN y el motor de visión está saturado, copia y pega aquí lo que dice el póster (evento, fecha, hora, lugar) y se publicará al instante sin esperar.</div>
+        <textarea id="ftexto" rows="4" placeholder="Ejemplo: Plática para Potenciales a Egresar. Martes 18 de agosto, 12:00 y 16:00 hrs, Sala de Usos Múltiples. Informes: Mtra. Dulce Rodríguez, egresados__idiomas__mxl@uabc.edu.mx"></textarea>
         <button id="fsubir">📤 Subir y publicar</button>
         <button id="nota">🎤 Grabar nota de voz</button>
         <button id="ldocs">🔄 Ver documentos</button>
         <button id="rep">📊 Reporte de uso</button>
         <div id="dlist"></div>
+        <span class="etiq">🗑️ Borrar un documento</span>
         <input id="fdel" placeholder="Nombre del documento a borrar (Enter borra)">
         <button id="bdel">🗑️ Borrar</button>
         <div id="fest"></div>
