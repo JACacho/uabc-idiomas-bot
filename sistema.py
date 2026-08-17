@@ -5,7 +5,7 @@ import time
 import asyncio
 import tempfile
 import requests
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from google import genai as genai_lib
 
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -41,10 +41,27 @@ VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-Denis
 
 DIAS = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
 MESES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio", 7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
+MESES_INV = {v: k for k, v in MESES.items()}
 
 def fecha_hoy_es():
     n = datetime.now()
     return f"{DIAS[n.weekday()]} {n.day} de {MESES[n.month]} de {n.year}"
+
+def _fechas_doc(texto):
+    fechas = []
+    for d, m, y in re.findall(r"(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{4})", (texto or "").lower()):
+        mes = MESES_INV.get(m)
+        if mes:
+            try:
+                fechas.append(date(int(y), mes, int(d)))
+            except Exception:
+                pass
+    for d, m, y in re.findall(r"(\d{1,2})/(\d{1,2})/(\d{4})", texto or ""):
+        try:
+            fechas.append(date(int(y), int(m), int(d)))
+        except Exception:
+            pass
+    return fechas
 
 MEMORIA_OFICIAL = [
     (["credito", "titular", "credit"], {
@@ -111,22 +128,25 @@ def cargar_contexto(pregunta):
                         docs[fn] = _limpiar_doc(f.read())
                 except Exception:
                     continue
+    hoy = date.today()
+    horizonte = hoy + timedelta(days=14)
     recientes = sorted(docs.keys(), reverse=True)[:2]
+    frescos = [fn for fn, t in docs.items() if any(hoy <= f <= horizonte for f in _fechas_doc(t))][:3]
     qt = _tokens(pregunta)
     scored = sorted(((len(qt & _tokens(t)), fn) for fn, t in docs.items()), reverse=True)
-    seleccion = list(recientes)
-    for score, fn in scored[:2]:
-        if score >= 2 and fn not in seleccion:
+    seleccion = []
+    for fn in recientes + frescos + [fn for _, fn in scored[:2]]:
+        if fn not in seleccion:
             seleccion.append(fn)
-    for fn in seleccion:
+    for fn in seleccion[:5]:
         partes.append(docs[fn])
-    return "\n\n".join(partes)[:9000]
+    return "\n\n".join(partes)[:12000]
 
 def sistema_prompt(contexto):
     return (
         f"Hoy es {fecha_hoy_es()}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
-        "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales y concisos (máximo ~120 palabras salvo que pidan detalle). "
-        "FECHAS RELATIVAS: si preguntan por 'hoy', 'mañana', 'esta semana' o 'la próxima semana', calcula el periodo correcto usando la fecha de hoy (la semana va de lunes a viernes); menciona también eventos o avisos recientes que apliquen a ese periodo. "
+        "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales, claros y concisos (máximo ~120 palabras salvo que pidan detalle). "
+        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy; NUNCA cites fechas que ya pasaron ni te contradigas; si no hay eventos próximos, dilo y menciona la siguiente fecha importante futura. "
         "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
         "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
         "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
