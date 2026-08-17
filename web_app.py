@@ -402,6 +402,7 @@ PAGINA = """
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
+  #toast { display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); color: #fff; padding: 13px 22px; border-radius: 14px; font-size: 14.5px; z-index: 99; box-shadow: 0 4px 16px rgba(0,0,0,.35); max-width: 92%; text-align: center; }
   .wrap { max-width: 1200px; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
   #side { width: 260px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
   #side b { font-size: 14px; }
@@ -425,6 +426,8 @@ PAGINA = """
   .bot .bub { background: #fff; border-bottom-left-radius: 4px; }
   .msg audio { width: 260px; max-width: 100%; }
   .think .bub { background: #fff; color: #666; font-style: italic; }
+  .dots::after { content: ''; animation: pts 1.2s steps(4) infinite; }
+  @keyframes pts { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
   .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .opts button { font-size: 12.5px; padding: 7px 11px; border-radius: 999px; border: 1px solid #00855f; background: #f2fbf6; color: #00684a; cursor: pointer; }
   .opts button:hover { background: #00855f; color: #fff; }
@@ -456,6 +459,7 @@ PAGINA = """
 </style>
 </head>
 <body>
+<div id="toast"></div>
 <div class="wrap">
   <aside id="side">
     <b>🗂️ Conversaciones</b>
@@ -488,22 +492,22 @@ PAGINA = """
     <div id="chat"></div>
     <div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
       <b>🛠️ Panel de personal</b>
-      <input id="clave" type="password" placeholder="Clave de acceso">
+      <input id="clave" type="password" placeholder="Clave de acceso (Enter para entrar)">
       <button id="unlock">🔓 Entrar</button>
       <button id="salirp">🚪 Salir del panel</button>
       <div id="zona" style="display:none">
         <select id="fcat">
-          <option>Avisos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>Eventos</option><option>TSU</option><option>PlanDeEstudios</option>
+          <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option>
         </select>
         <input id="fvig" type="date">
         <div id="drop">📥 Arrastra aquí tu documento o póster (TXT, PDF o imagen)<br><small>o toca para elegirlo</small></div>
         <input id="ffile" type="file" style="display:none">
-        <button id="fsubir">📤 Subir y enseñar al bot</button>
+        <button id="fsubir">📤 Subir y publicar</button>
         <button id="nota">🎤 Grabar nota de voz</button>
         <button id="ldocs">🔄 Ver documentos</button>
         <button id="rep">📊 Reporte de uso</button>
         <div id="dlist"></div>
-        <input id="fdel" placeholder="Nombre del documento a borrar">
+        <input id="fdel" placeholder="Nombre del documento a borrar (Enter borra)">
         <button id="bdel">🗑️ Borrar</button>
         <div id="fest"></div>
       </div>
@@ -516,11 +520,19 @@ PAGINA = """
   </main>
 </div>
 <script>
-let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0;
+let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null;
 let currentUser = localStorage.getItem('uabc_user') || "";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function avisar(msg, tipo){
+  const t = document.getElementById('toast');
+  t.innerText = msg;
+  t.style.background = tipo === 'error' ? '#d32f2f' : (tipo === 'ok' ? '#00684a' : '#f7941d');
+  t.style.display = 'block';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.display = 'none'; }, 7000);
+}
 function bubble(role, text, audio){
   const d = document.createElement('div'); d.className = 'msg ' + role;
   let h = '<div class="bub">' + esc(text) + '</div>';
@@ -618,26 +630,33 @@ document.getElementById('convs').onclick = () => { const d = document.getElement
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
 document.getElementById('ureg').onclick = async () => {
   const d = await (await fetch('/api/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
-  if (!d.ok) return alert(d.error);
+  if (!d.ok) { avisar(d.error, 'error'); return; }
   currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
   refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
+  avisar('✅ Bienvenido, ' + currentUser + '. Tus conversaciones se guardarán.', 'ok');
 };
 document.getElementById('ulin').onclick = async () => {
   const d = await (await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
-  if (!d.ok) return alert(d.error);
+  if (!d.ok) { avisar(d.error, 'error'); return; }
   currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
   refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
+  avisar('✅ Sesión iniciada: ' + currentUser, 'ok');
 };
 document.getElementById('uguest').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
-document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
+document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
   document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
 });
 const drop = document.getElementById('drop');
+function marcarArchivo(f){
+  droppedFile = f;
+  drop.innerHTML = '📎 ' + esc(f.name);
+  avisar('📎 Archivo listo: ' + f.name + ' → pulsa "📤 Subir y publicar".');
+}
 drop.onclick = () => document.getElementById('ffile').click();
 drop.ondragover = e => e.preventDefault();
-drop.ondrop = e => { e.preventDefault(); if (e.dataTransfer.files[0]) { droppedFile = e.dataTransfer.files[0]; drop.innerHTML = '📎 ' + esc(droppedFile.name); } };
-document.getElementById('ffile').onchange = e => { droppedFile = e.target.files[0] || null; if (droppedFile) drop.innerHTML = '📎 ' + esc(droppedFile.name); };
+drop.ondrop = e => { e.preventDefault(); if (e.dataTransfer.files[0]) marcarArchivo(e.dataTransfer.files[0]); };
+document.getElementById('ffile').onchange = e => { if (e.target.files[0]) marcarArchivo(e.target.files[0]); };
 const mic = document.getElementById('mic');
 mic.onclick = async () => {
   if (rec && rec.state === 'recording') { rec.stop(); return; }
@@ -659,19 +678,23 @@ mic.onclick = async () => {
     saveConv();
   };
   rec.start(); mic.classList.add('rec');
+  avisar('🎤 Grabando tu pregunta… toca el micrófono para terminar.');
 };
 document.getElementById('gear').onclick = () => { const d = document.getElementById('drawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; };
 document.getElementById('salirp').onclick = () => { state = {pending:false, active:false}; document.getElementById('drawer').style.display = 'none'; document.getElementById('zona').style.display = 'none'; };
+document.getElementById('clave').onkeydown = e => { if (e.key === 'Enter') document.getElementById('unlock').click(); };
+document.getElementById('fdel').onkeydown = e => { if (e.key === 'Enter') document.getElementById('bdel').click(); };
 document.getElementById('unlock').onclick = async () => {
   const r = await fetch('/api/unlock', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})});
   const d = await r.json();
   document.getElementById('zona').style.display = d.ok ? 'block' : 'none';
-  if (d.ok) loadDocs();
-  if (!d.ok) alert('❌ Clave incorrecta');
+  if (d.ok) { loadDocs(); avisar('✅ Panel de personal abierto.', 'ok'); }
+  else avisar('❌ Clave incorrecta.', 'error');
 };
 document.getElementById('fsubir').onclick = async () => {
   const f = document.getElementById('ffile').files[0] || droppedFile;
-  if (!f) return alert('Selecciona o arrastra un archivo');
+  if (!f) { avisar('⚠️ Primero elige o arrastra un archivo.', 'error'); return; }
+  avisar('⏳ Procesando y publicando… puede tardar unos segundos.');
   const fd = new FormData();
   fd.append('archivo', f);
   fd.append('categoria', document.getElementById('fcat').value);
@@ -679,12 +702,15 @@ document.getElementById('fsubir').onclick = async () => {
   fd.append('reemplazar', '0');
   const d = await (await fetch('/api/upload', {method:'POST', body: fd})).json();
   document.getElementById('fest').innerText = d.estado;
+  avisar(d.estado, d.estado.startsWith('✅') ? 'ok' : 'error');
   loadDocs();
 };
 document.getElementById('ldocs').onclick = loadDocs;
 document.getElementById('bdel').onclick = async () => {
   const d = await (await fetch('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value, nombre: document.getElementById('fdel').value})})).json();
-  document.getElementById('fest').innerText = d.estado; loadDocs();
+  document.getElementById('fest').innerText = d.estado;
+  avisar(d.estado, d.estado.startsWith('🗑️') ? 'ok' : 'error');
+  loadDocs();
 };
 document.getElementById('nota').onclick = async () => {
   if (rec2 && rec2.state === 'recording') { rec2.stop(); return; }
@@ -693,21 +719,24 @@ document.getElementById('nota').onclick = async () => {
   rec2.ondataavailable = e => ch.push(e.data);
   rec2.onstop = async () => {
     stream.getTracks().forEach(t => t.stop());
+    avisar('⏳ Transcribiendo y publicando tu nota…');
     const fd = new FormData();
     fd.append('audio', new Blob(ch, {type:'audio/webm'}), 'nota.webm');
     fd.append('categoria', document.getElementById('fcat').value);
     const d = await (await fetch('/api/voice_note', {method:'POST', body: fd})).json();
     document.getElementById('fest').innerText = d.estado;
+    avisar(d.estado, d.estado.startsWith('✅') ? 'ok' : 'error');
     loadDocs();
   };
   rec2.start();
-  document.getElementById('fest').innerText = '🔴 Grabando nota… toca de nuevo para terminar.';
+  avisar('🔴 Grabando nota… toca de nuevo para terminar y publicar.');
 };
 document.getElementById('rep').onclick = async () => {
   const d = await (await fetch('/api/report', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})})).json();
-  if (d.error) return alert(d.error);
+  if (d.error) { avisar(d.error, 'error'); return; }
   document.getElementById('fest').innerText = '📊 Total: ' + d.total + ' · Hoy: ' + d.hoy + ' · Idiomas: ' + JSON.stringify(d.idiomas)
     + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
+  avisar('📊 Reporte listo en el panel.', 'ok');
 };
 welcome(); loadList(); refreshWho(); inp.focus();
 </script>
