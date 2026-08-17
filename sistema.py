@@ -35,32 +35,54 @@ def detectar_idioma(texto):
         return "en"
     return "es"
 
-def cargar_contexto():
+def _limpiar_doc(texto):
+    lineas = []
+    for ln in (texto or "").splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("===") or s.startswith("DOCUMENTO") or s.startswith("🖼️"):
+            continue
+        lineas.append(s)
+    return "\n".join(lineas)
+
+def _tokens(t):
+    return set(re.findall(r"[a-záéíóúñü]+", (t or "").lower()))
+
+def cargar_contexto(pregunta):
     partes = []
     try:
         with open(MANUAL, encoding="utf-8", errors="ignore") as f:
-            partes.append("MANUAL OFICIAL:\n" + f.read())
+            partes.append(_limpiar_doc(f.read()))
     except Exception:
         pass
+    qt = _tokens(pregunta)
+    docs = []
     if os.path.isdir(CARPETA):
         for fn in sorted(os.listdir(CARPETA)):
             if fn.endswith(".txt"):
                 try:
                     with open(os.path.join(CARPETA, fn), encoding="utf-8", errors="ignore") as f:
-                        partes.append("DOCUMENTO " + fn + ":\n" + f.read())
+                        texto = _limpiar_doc(f.read())
                 except Exception:
-                    pass
-    return "\n\n".join(partes)[:18000]
+                    continue
+                score = len(qt & _tokens(texto))
+                docs.append((score, texto))
+    docs.sort(key=lambda x: x[0], reverse=True)
+    for score, texto in docs[:3]:
+        if score >= 1:
+            partes.append(texto)
+    return "\n\n".join(partes)[:12000]
 
 def sistema_prompt(contexto):
     hoy = datetime.now().strftime("%A %d de %B de %Y")
     return (
         f"Hoy es {hoy}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
-        "Responde con amabilidad y en el idioma de la pregunta (español, inglés o francés), usando el CONTEXTO. "
-        "Si la respuesta está en el CONTEXTO, úsala con sus datos exactos (cifras, fechas, teléfonos). "
-        "No inventes datos ni repitas encabezados técnicos del CONTEXTO. No escribas etiquetas ni corchetes al inicio. "
-        "Solo si la información realmente NO aparece en el CONTEXTO, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
-        f"\n=== CONTEXTO ===\n{contexto}"
+        "Responde con amabilidad, en el idioma de la pregunta (español, inglés o francés), y en párrafos naturales. "
+        "REGLAS DE ORO: reformula la información con tus propias palabras; NUNCA copies ni menciones nombres de archivo, "
+        "encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; usa solo los datos disponibles (cifras, fechas, teléfonos). "
+        "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
+        f"\nINFORMACIÓN DISPONIBLE:\n{contexto}"
     )
 
 def llamar_gemini(sp, hist, pregunta):
@@ -75,7 +97,7 @@ def llamar_gemini(sp, hist, pregunta):
             r = cliente_gemini.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=contents,
-                config=types.GenerateContentConfig(system_instruction=sp, temperature=0.2),
+                config=types.GenerateContentConfig(system_instruction=sp, temperature=0.1),
             )
             t = (r.text or "").strip()
             if t:
@@ -94,7 +116,7 @@ def llamar_openai(sp, hist, pregunta, url, key, modelos):
             r = requests.post(
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": modelo, "messages": msgs, "temperature": 0.2},
+                json={"model": modelo, "messages": msgs, "temperature": 0.1},
                 timeout=30,
             )
             d = r.json()
@@ -121,14 +143,14 @@ def _guardar_cache(c):
 
 def _es_cacheable(texto):
     t = (texto or "").lower()
-    return not (texto.startswith("⚠️") or "no está en el contexto" in t or "===" in texto or "manual de conocimiento" in t)
+    return not (texto.startswith("⚠️") or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t)
 
 def responder(pregunta, historial):
     clave = (pregunta or "").strip().lower()[:120]
     cache = _cargar_cache()
     if clave in cache:
         return cache[clave][0], cache[clave][1]
-    contexto = cargar_contexto()
+    contexto = cargar_contexto(pregunta)
     sp = sistema_prompt(contexto)
     hist = []
     for m in (historial or []):
