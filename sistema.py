@@ -39,6 +39,13 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-DeniseNeural"}
 
+DIAS = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
+MESES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio", 7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
+
+def fecha_hoy_es():
+    n = datetime.now()
+    return f"{DIAS[n.weekday()]} {n.day} de {MESES[n.month]} de {n.year}"
+
 MEMORIA_OFICIAL = [
     (["credito", "titular", "credit"], {
         "es": "Para titularte en la Licenciatura en Traducción (LT) de la Facultad de Idiomas de la UABC necesitas un total de 349 créditos: 237 de materias obligatorias, 102 de materias optativas y 10 de prácticas profesionales. Para más detalles consulta idiomas.mxl.uabc.mx o llama al 686-689-0825.",
@@ -95,29 +102,31 @@ def cargar_contexto(pregunta):
             partes.append(_limpiar_doc(f.read()))
     except Exception:
         pass
-    qt = _tokens(pregunta)
-    docs = []
+    docs = {}
     if os.path.isdir(CARPETA):
         for fn in sorted(os.listdir(CARPETA)):
             if fn.endswith(".txt"):
                 try:
                     with open(os.path.join(CARPETA, fn), encoding="utf-8", errors="ignore") as f:
-                        texto = _limpiar_doc(f.read())
+                        docs[fn] = _limpiar_doc(f.read())
                 except Exception:
                     continue
-                score = len(qt & _tokens(texto))
-                docs.append((score, texto))
-    docs.sort(key=lambda x: x[0], reverse=True)
-    for score, texto in docs[:2]:
-        if score >= 2:
-            partes.append(texto)
+    recientes = sorted(docs.keys(), reverse=True)[:2]
+    qt = _tokens(pregunta)
+    scored = sorted(((len(qt & _tokens(t)), fn) for fn, t in docs.items()), reverse=True)
+    seleccion = list(recientes)
+    for score, fn in scored[:2]:
+        if score >= 2 and fn not in seleccion:
+            seleccion.append(fn)
+    for fn in seleccion:
+        partes.append(docs[fn])
     return "\n\n".join(partes)[:9000]
 
 def sistema_prompt(contexto):
-    hoy = datetime.now().strftime("%A %d de %B de %Y")
     return (
-        f"Hoy es {hoy}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
+        f"Hoy es {fecha_hoy_es()}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
         "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales y concisos (máximo ~120 palabras salvo que pidan detalle). "
+        "FECHAS RELATIVAS: si preguntan por 'hoy', 'mañana', 'esta semana' o 'la próxima semana', calcula el periodo correcto usando la fecha de hoy (la semana va de lunes a viernes); menciona también eventos o avisos recientes que apliquen a ese periodo. "
         "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
         "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
         "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
@@ -198,7 +207,6 @@ def responder(pregunta, historial, lang_pref="auto"):
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    # === CASCADA: Gemini 1 → Gemini 2 → OpenRouter → Groq ===
     texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
     if not texto:
         texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final)
