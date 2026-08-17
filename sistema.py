@@ -24,22 +24,34 @@ OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-DeniseNeural"}
 
 MEMORIA_OFICIAL = [
-    (["credito", "titular"],
-     "Para titularte en la Licenciatura en Traducción (LT) de la Facultad de Idiomas de la UABC necesitas un total de 349 créditos: 237 de materias obligatorias, 102 de materias optativas y 10 de prácticas profesionales. Para más detalles consulta idiomas.mxl.uabc.mx o llama al 686-689-0825."),
-    (["horario", "cec"],
-     "El Centro de Enseñanza de Lenguas (CEC) ofrece cursos en formatos semanal, sabatino, intensivo e intersemestral, con horarios matutinos, vespertinos y nocturnos. Los grupos exactos de cada periodo se publican en la convocatoria vigente en cecuabc.com y lenguasextranjeras.uabc.mx. Informes: recepcionmxl@uabc.edu.mx o al 686 841-82-91 ext. 300."),
-    (["admision", "requisito"],
-     "Para ingresar a la Facultad de Idiomas necesitas: 1) concluir el bachillerato con promedio aprobatorio, 2) certificado de bachillerato, acta de nacimiento y CURP, 3) registrarte en el portal de admisiones cuando abra la convocatoria (dos veces al año: en agosto y en enero), y 4) presentar el Examen de Selección institucional. No se requiere inglés avanzado: la Facultad te forma desde cero hasta nivel profesional. Fechas exactas en admision.uabc.mx."),
-    (["carrera", "tsu", "tecnico"],
-     "La Facultad de Idiomas ofrece dos licenciaturas: Enseñanza de Lenguas (LEL) y Traducción (LT), además del Técnico Superior Universitario (TSU), una opción de nivel superior con enfoque práctico y rápida salida al campo laboral. Consulta la convocatoria vigente en idiomas.mxl.uabc.mx o llama al 686-689-0825 para confirmar la especialidad del ciclo actual."),
+    (["credito", "titular"], {
+        "es": "Para titularte en la Licenciatura en Traducción (LT) de la Facultad de Idiomas de la UABC necesitas un total de 349 créditos: 237 de materias obligatorias, 102 de materias optativas y 10 de prácticas profesionales. Para más detalles consulta idiomas.mxl.uabc.mx o llama al 686-689-0825.",
+        "en": "To graduate from the Translation Bachelor's (LT) at the UABC Faculty of Languages you need 349 credits: 237 mandatory, 102 electives and 10 professional internships. Details at idiomas.mxl.uabc.mx or call 686-689-0825.",
+        "fr": "Pour obtenir votre diplôme en Traduction (LT) à la Faculté de Langues de l'UABC, il faut 349 crédits : 237 obligatoires, 102 optionnels et 10 de stages. Détails sur idiomas.mxl.uabc.mx ou au 686-689-0825."}),
+    (["frances", "francés", "french", "français", "ingles", "inglés", "english", "study", "estudiar", "curso", "cec", "horario"], {
+        "es": "El Centro de Enseñanza de Lenguas (CEC) ofrece cursos de inglés, francés, alemán, italiano, portugués, ruso, chino mandarín, japonés, coreano y español para extranjeros, en formatos semanal, sabatino, intensivo e intersemestral, con horarios matutinos, vespertinos y nocturnos. Los grupos de cada periodo se publican en cecuabc.com. Informes: recepcionmxl@uabc.edu.mx o al 686 841-82-91 ext. 300.",
+        "en": "The Language Teaching Center (CEC) offers courses in English, French, German, Italian, Portuguese, Russian, Mandarin, Japanese, Korean and Spanish for foreigners, in weekly, Saturday, intensive and inter-semester formats, morning, afternoon and evening. Groups are published each term at cecuabc.com. Info: recepcionmxl@uabc.edu.mx or 686 841-82-91 ext. 300.",
+        "fr": "Le Centre d'Enseignement des Langues (CEC) propose des cours d'anglais, de français, d'allemand, d'italien, de portugais, de russe, de mandarin, de japonais, de coréen et d'espagnol pour étrangers, en formats hebdomadaire, samedi, intensif et intersemestriel, matin, après-midi et soir. Les groupes sont publiés chaque semestre sur cecuabc.com. Infos : recepcionmxl@uabc.edu.mx ou 686 841-82-91 poste 300."}),
+    (["admision", "requisito"], {
+        "es": "Para ingresar a la Facultad de Idiomas necesitas: 1) concluir el bachillerato con promedio aprobatorio, 2) certificado de bachillerato, acta de nacimiento y CURP, 3) registrarte en el portal de admisiones cuando abra la convocatoria (agosto y enero), y 4) presentar el Examen de Selección institucional. No se requiere inglés avanzado: la Facultad te forma desde cero. Fechas en admision.uabc.mx.",
+        "en": "To enter the Faculty of Languages you need: 1) finish high school with a passing average, 2) high school certificate, birth certificate and CURP, 3) register on the admissions portal when the call opens (August and January), and 4) take the institutional Selection Exam. Advanced English is not required: the Faculty trains you from zero. Dates at admision.uabc.mx.",
+        "fr": "Pour entrer à la Faculté de Langues : 1) terminer le lycée avec une moyenne suffisante, 2) certificat de lycée, acte de naissance et CURP, 3) s'inscrire sur le portail d'admission quand l'appel ouvre (août et janvier), et 4) passer l'Examen de Sélection institutionnel. L'anglais avancé n'est pas requis : la Faculté vous forme depuis zéro. Dates sur admision.uabc.mx."}),
+    (["carrera", "tsu", "tecnico", "técnico", "programas"], {
+        "es": "La Facultad de Idiomas ofrece dos licenciaturas: Enseñanza de Lenguas (LEL) y Traducción (LT), además del Técnico Superior Universitario (TSU), una opción con enfoque práctico y rápida salida al campo laboral. Consulta la convocatoria vigente en idiomas.mxl.uabc.mx o llama al 686-689-0825.",
+        "en": "The Faculty of Languages offers two bachelor's degrees: Language Teaching (LEL) and Translation (LT), plus a Higher University Technician (TSU) program with a practical focus and quick entry to the job market. Check the current call at idiomas.mxl.uabc.mx or call 686-689-0825.",
+        "fr": "La Faculté de Langues propose deux licences : Enseignement des Langues (LEL) et Traduction (LT), ainsi qu'un Technicien Supérieur Universitaire (TSU), option pratique avec insertion rapide sur le marché du travail. Consultez l'appel en cours sur idiomas.mxl.uabc.mx ou appelez le 686-689-0825."}),
+    (["que haces", "what do you do", "ayudar", "help", "sirves", "puedes hacer"], {
+        "es": "Puedo informarte sobre créditos y planes de estudio, cursos y horarios del CEC, requisitos de admisión, carreras y TSU, y avisos o fechas oficiales de la Facultad de Idiomas de la UABC en Mexicali, en español, inglés o francés, por texto o por voz. ¿Qué te gustaría saber?",
+        "en": "I can help you with credits and study plans, CEC courses and schedules, admission requirements, degrees and TSU, and official notices and dates of the UABC Faculty of Languages in Mexicali, in Spanish, English or French, by text or voice. What would you like to know?",
+        "fr": "Je peux vous renseigner sur les crédits et plans d'études, les cours et horaires du CEC, les conditions d'admission, les licences et le TSU, ainsi que les avis et dates officielles de la Faculté de Langues de l'UABC à Mexicali, en espagnol, anglais ou français, par texte ou par voix. Que souhaitez-vous savoir ?"}),
 ]
 
 def detectar_idioma(texto):
     t = (texto or "").lower()
-    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits", "je", "étudier", "français"]
-    en = ["hello", "thank", "how many", "credits", "degree", "translation", "what", "when", "where", "i want"]
-    hf = sum(1 for w in fr if w in t)
-    he = sum(1 for w in en if w in t)
+    fr = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôme", "traduction", "salut", "crédits", "je", "étudier", "français", "francais", "aime", "voudrais", "quel", "quelle", "les", "des", "est"]
+    en = ["hello", "thank", "how", "many", "credits", "degree", "translation", "what", "when", "where", "i", "would", "like", "to", "study", "french", "english", "do", "you", "for", "me", "is", "are", "the", "my", "can", "help"]
+    hf = sum(1 for w in fr if re.search(r"\b" + w + r"\b", t))
+    he = sum(1 for w in en if re.search(r"\b" + w + r"\b", t))
     if hf >= 2 and hf > he:
         return "fr"
     if he >= 2 and he > hf:
@@ -80,18 +92,18 @@ def cargar_contexto(pregunta):
                 score = len(qt & _tokens(texto))
                 docs.append((score, texto))
     docs.sort(key=lambda x: x[0], reverse=True)
-    for score, texto in docs[:3]:
-        if score >= 1:
+    for score, texto in docs[:2]:
+        if score >= 2:
             partes.append(texto)
-    return "\n\n".join(partes)[:12000]
+    return "\n\n".join(partes)[:9000]
 
 def sistema_prompt(contexto):
     hoy = datetime.now().strftime("%A %d de %B de %Y")
     return (
         f"Hoy es {hoy}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
-        "Responde con amabilidad, en el idioma de la pregunta (español, inglés o francés), y en párrafos naturales. "
-        "REGLAS DE ORO: reformula la información con tus propias palabras; NUNCA copies ni menciones nombres de archivo, "
-        "encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; usa solo los datos disponibles (cifras, fechas, teléfonos). "
+        "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales y concisos (máximo ~120 palabras salvo que pidan detalle). "
+        "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
+        "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
         "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
         f"\nINFORMACIÓN DISPONIBLE:\n{contexto}"
     )
@@ -149,32 +161,35 @@ def _guardar_cache(c):
 
 def _es_cacheable(texto):
     t = (texto or "").lower()
-    return not (texto.startswith("⚠️") or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t)
+    return not (texto.startswith("⚠️") or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
 
-def responder(pregunta, historial):
+def responder(pregunta, historial, lang_pref="auto"):
     p = (pregunta or "").lower()
-    for claves, respuesta_oficial in MEMORIA_OFICIAL:
+    lang_detect = detectar_idioma(pregunta)
+    lang = lang_pref if lang_pref in ("es", "en", "fr") else lang_detect
+    for claves, trad in MEMORIA_OFICIAL:
         if any(k in p for k in claves):
-            return respuesta_oficial, detectar_idioma(pregunta)
+            return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120]
     cache = _cargar_cache()
     if clave in cache:
         return cache[clave][0], cache[clave][1]
     contexto = cargar_contexto(pregunta)
     sp = sistema_prompt(contexto)
+    suf = {"es": " (Responde en español, conciso.)", "en": " (Answer in English, concise.)", "fr": " (Réponds en français, concis.)"}[lang]
+    pregunta_final = pregunta + suf
     hist = []
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    texto = llamar_gemini(sp, hist, pregunta)
+    texto = llamar_openai(sp, hist, pregunta_final, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, ["llama-3.3-70b-versatile"])
     if not texto:
-        texto = llamar_openai(sp, hist, pregunta, "https://api.groq.com/openai/v1/chat/completions", GROQ_KEY, ["llama-3.3-70b-versatile"])
+        texto = llamar_gemini(sp, hist, pregunta_final)
     if not texto:
-        texto = llamar_openai(sp, hist, pregunta, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, ["meta-llama/llama-3.3-70b-instruct:free"])
+        texto = llamar_openai(sp, hist, pregunta_final, "https://openrouter.ai/api/v1/chat/completions", OR_KEY, ["meta-llama/llama-3.3-70b-instruct:free"])
     if not texto:
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
-    lang = detectar_idioma(pregunta)
     if _es_cacheable(texto):
         cache[clave] = [texto, lang]
         _guardar_cache(cache)
