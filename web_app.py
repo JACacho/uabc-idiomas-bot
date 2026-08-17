@@ -274,15 +274,17 @@ async def topfaq():
     return [{"q": q, "n": n} for q, n in c.most_common(4)]
 
 @app.post("/api/upload")
-async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("0")):
+async def api_upload(archivo: UploadFile = File(...), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("0"), texto_manual: str = Form("")):
     nombre_orig = archivo.filename or "doc.txt"
     ext = os.path.splitext(nombre_orig)[1].lower()
     data = await archivo.read()
     if ext in EXT_IMG:
         mime = "image/png" if ext == ".png" else "image/jpeg"
         texto = _sist.extraer_imagen(data, mime)
+        if not texto and texto_manual.strip():
+            texto = texto_manual.strip()
         if not texto:
-            return {"estado": "⚠️ No pude leer el póster (el motor de visión está saturado). Intenta de nuevo en un minuto, o usa TXT/PDF."}
+            return {"estado": "⚠️ Visión saturada: reintenta en un minuto, pega el texto del póster en el cuadro, o usa TXT/PDF."}
         iname = str(uuid.uuid4()) + ext
         with open(os.path.join(IMGS, iname), "wb") as f:
             f.write(data)
@@ -442,7 +444,7 @@ PAGINA = """
   #gear { position: fixed; right: 10px; top: 74px; background: rgba(0,0,0,.25); border: none; color: #fff; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; z-index: 5; }
   #convs { display: none; }
   .drawer { display: none; background: #fff; margin: 0 12px 8px; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 13px; max-height: 60vh; overflow-y: auto; }
-  .drawer input, .drawer select { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
+  .drawer input, .drawer select, .drawer textarea { margin: 4px 0; padding: 8px; border-radius: 8px; border: 1px solid #cfd8dc; width: 100%; }
   .drawer button { margin-top: 6px; padding: 8px 12px; border-radius: 10px; border: none; background: #00684a; color: #fff; cursor: pointer; }
   .drawer .item { display: block; width: 100%; background: #f2f4f7; color: #222; margin: 4px 0; text-align: left; }
   .xbtn { background: #d32f2f !important; float: right; }
@@ -502,6 +504,7 @@ PAGINA = """
         <input id="fvig" type="date">
         <div id="drop">📥 Arrastra aquí tu documento o póster (TXT, PDF o imagen)<br><small>o toca para elegirlo</small></div>
         <input id="ffile" type="file" style="display:none">
+        <textarea id="ftexto" rows="3" placeholder="O pega aquí el texto del póster (plan B si la visión está saturada)"></textarea>
         <button id="fsubir">📤 Subir y publicar</button>
         <button id="nota">🎤 Grabar nota de voz</button>
         <button id="ldocs">🔄 Ver documentos</button>
@@ -700,6 +703,7 @@ document.getElementById('fsubir').onclick = async () => {
   fd.append('categoria', document.getElementById('fcat').value);
   fd.append('vigencia', document.getElementById('fvig').value);
   fd.append('reemplazar', '0');
+  fd.append('texto_manual', document.getElementById('ftexto').value);
   const d = await (await fetch('/api/upload', {method:'POST', body: fd})).json();
   document.getElementById('fest').innerText = d.estado;
   avisar(d.estado, d.estado.startsWith('✅') ? 'ok' : 'error');
