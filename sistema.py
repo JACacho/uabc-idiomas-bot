@@ -133,13 +133,7 @@ def _es_valida(t):
         return False
     return True
 
-def cargar_contexto(pregunta):
-    partes = []
-    try:
-        with open(MANUAL, encoding="utf-8", errors="ignore") as f:
-            partes.append(_limpiar_doc(f.read()))
-    except Exception:
-        pass
+def _cargar_docs():
     docs = {}
     if os.path.isdir(CARPETA):
         for fn in sorted(os.listdir(CARPETA)):
@@ -149,6 +143,16 @@ def cargar_contexto(pregunta):
                         docs[fn] = _limpiar_doc(f.read())
                 except Exception:
                     continue
+    return docs
+
+def cargar_contexto(pregunta):
+    partes = []
+    try:
+        with open(MANUAL, encoding="utf-8", errors="ignore") as f:
+            partes.append(_limpiar_doc(f.read()))
+    except Exception:
+        pass
+    docs = _cargar_docs()
     hoy = date.today()
     horizonte = hoy + timedelta(days=14)
     recientes = sorted(docs.keys(), reverse=True)[:2]
@@ -162,6 +166,23 @@ def cargar_contexto(pregunta):
     for fn in seleccion[:5]:
         partes.append(docs[fn])
     return "\n\n".join(partes)[:12000]
+
+def respuesta_de_documentos(pregunta):
+    docs = _cargar_docs()
+    if not docs:
+        return ""
+    hoy = date.today()
+    horizonte = hoy + timedelta(days=14)
+    p = (pregunta or "").lower()
+    if any(k in p for k in ("semana", "evento", "hoy", "mañana", "pronto", "avisos", "hay")):
+        frescos = [t for t in docs.values() if any(hoy <= f <= horizonte for f in _fechas_doc(t))][:2]
+        if frescos:
+            return "📅 Según los avisos oficiales más recientes de la Facultad:\n\n" + "\n\n".join(t[:500] for t in frescos)
+    qt = _tokens(pregunta)
+    scored = sorted(((len(qt & _tokens(t)), t) for t in docs.values()), reverse=True)
+    if scored and scored[0][0] >= 3:
+        return "Según la información oficial de la Facultad: " + scored[0][1][:600]
+    return ""
 
 def sistema_prompt(contexto):
     return (
@@ -253,7 +274,7 @@ def _vision_gemini(cliente, data, mime, prompt):
 
 def extraer_imagen(data, mime="image/jpeg"):
     errs = []
-    for i, cliente in enumerate((_clientes_gemini()), 1):
+    for i, cliente in enumerate((cliente_gemini, cliente_gemini2), 1):
         t = _vision_gemini(cliente, data, mime, PROMPT_POSTER)
         if t:
             return t, ""
@@ -294,7 +315,7 @@ def _guardar_cache(c):
 
 def _es_cacheable(texto):
     t = (texto or "").lower()
-    return not (texto.startswith("⚠️") or len(texto) < 60 or "ayudarte hoy" in t or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
+    return not (texto.startswith("⚠️") or texto.startswith("📅") or texto.startswith("Según la información oficial") or len(texto) < 60 or "ayudarte hoy" in t or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
 
 def responder(pregunta, historial, lang_pref="auto"):
     p = (pregunta or "").lower()
@@ -322,6 +343,10 @@ def responder(pregunta, historial, lang_pref="auto"):
         texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "meta-llama/llama-3.3-70b-instruct:free"])
     if not _es_valida(texto):
         texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
+    if not _es_valida(texto):
+        fb = respuesta_de_documentos(pregunta)
+        if fb:
+            return fb, lang
     if not _es_valida(texto):
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
     texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
