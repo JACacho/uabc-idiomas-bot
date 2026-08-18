@@ -2,36 +2,56 @@ import os
 import re
 import uuid
 import json
+import time
 import base64
 import asyncio
 import hashlib
 import secrets
-import requests as http_requests
-from datetime import datetime
+import tempfile
+import requests
+from datetime import datetime, date, timedelta
 from collections import Counter
+from google import genai as genai_lib
+from google.genai import types as gtypes
 from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
-import sistema as _sist
-from sistema import responder, transcribir, generar_voz
 
+# ================= CONFIGURACIÓN =================
 BASE = os.path.dirname(os.path.abspath(__file__))
+MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
 CARPETA = os.path.join(BASE, "datos_bot")
 AUDIOS = os.path.join(BASE, "audios")
 IMGS = os.path.join(BASE, "posters")
 CONVS = os.path.join(BASE, "conversaciones")
 FEEDBACK = os.path.join(BASE, "feedback")
-CONTADOR = os.path.join(BASE, "conteo.txt")
+CACHE = os.path.join(BASE, "cache.json")
 USO = os.path.join(BASE, "uso.jsonl")
 USERS = os.path.join(BASE, "users.json")
-SESSIONS = os.path.join(BASE, "sessions.json")
 CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "fimxl2026")
 GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO = os.environ.get("GITHUB_REPO", "")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OR_URL = "https://openrouter.ai/api/v1/chat/completions"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
 for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK):
     os.makedirs(d, exist_ok=True)
+
+def _mk_client(k):
+    if not k:
+        return None
+    try:
+        return genai_lib.Client(api_key=k)
+    except Exception:
+        return None
+
+cliente_gemini = _mk_client(GEMINI_KEY)
+cliente_gemini2 = _mk_client(GEMINI_KEY_2)
 
 AREAS_RESP = {
     "Admisión": "admision.mxl@uabc.edu.mx",
@@ -44,13 +64,375 @@ AREAS_RESP = {
 
 try:
     if not os.path.exists(LOGO):
-        r = http_requests.get(LOGO_URL, timeout=10)
+        r = requests.get(LOGO_URL, timeout=10)
         if r.status_code == 200 and r.content:
             with open(LOGO, "wb") as f:
                 f.write(r.content)
 except Exception:
     pass
 
+VOCES = {"es": "es-MX-DaliaNeural", "en": "en-US-AriaNeural", "fr": "fr-FR-DeniseNeural"}
+DIAS = {0: "lunes", 1: "martes", 2: "miércoles", 3: "jueves", 4: "viernes", 5: "sábado", 6: "domingo"}
+MESES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio", 7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"}
+MESES_INV = {v: k for k, v in MESES.items()}
+MESES_ALT = "(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)"
+EXT_IMG = (".png", ".jpg", ".jpeg", ".webp")
+PROMPT_POSTER = "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios."
+IMG_PRUEBA = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+# ================= CEREBRO =================
+def fecha_hoy_es():
+    n = datetime.now()
+    return f"{DIAS[n.weekday()]} {n.day} de {MESES[n.month]} de {n.year}"
+
+def detectar_idioma(texto):
+    t = (texto or "").lower()
+    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôm", "traduction", "salut", "crédit", "je ", "étud", "etud", "français", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les ", "des ", "anglais"]
+    en_st = ["hello", "thank", "how", "many", "credit", "degree", "translation", "what", "when", "where", "i ", "would", "like", "to ", "study", "french", "english", "do ", "you", "for", "me", "is ", "are ", "the ", "my ", "can", "help"]
+    hf = sum(1 for w in fr_st if w in t)
+    he = sum(1 for w in en_st if w in t)
+    if hf >= 2 and hf > he:
+        return "fr"
+    if he >= 2 and he > hf:
+        return "en"
+    return "es"
+
+def _fechas_doc(texto):
+    fechas = []
+    t = (texto or "").lower()
+    for d, m, y in re.findall(r"(\d{1,2})\s+de\s+" + MESES_ALT + r"\s+de\s+(\d{4})", t):
+        try:
+            fechas.append(date(int(y), MESES_INV[m], int(d)))
+        except Exception:
+            pass
+    for d, m in re.findall(r"(\d{1,2})\s+de\s+" + MESES_ALT, t):
+        try:
+            fechas.append(date(date.today().year, MESES_INV[m], int(d)))
+        except Exception:
+            pass
+    for d, m, y in re.findall(r"(\d{1,2})/(\d{1,2})/(\d{4})", t):
+        try:
+            fechas.append(date(int(y), int(m), int(d)))
+        except Exception:
+            pass
+    return fechas
+
+MEMORIA_OFICIAL = [
+    (["credito", "titular", "credit"], {
+        "es": "Para titularte en la Licenciatura en Traducción (LT) de la Facultad de Idiomas de la UABC necesitas un total de 349 créditos: 237 de materias obligatorias, 102 de materias optativas y 10 de prácticas profesionales. Para más detalles consulta idiomas.mxl.uabc.mx o llama al 686-689-0825.",
+        "en": "To graduate from the Translation Bachelor's (LT) at the UABC Faculty of Languages you need 349 credits: 237 mandatory, 102 electives and 10 professional internships. Details at idiomas.mxl.uabc.mx or call 686-689-0825.",
+        "fr": "Pour obtenir votre diplôme en Traduction (LT) à la Faculté de Langues de l'UABC, il faut 349 crédits : 237 obligatoires, 102 optionnels et 10 de stages. Détails sur idiomas.mxl.uabc.mx ou au 686-689-0825."}),
+    (["carrera", "tsu", "tecnico", "técnico", "programas", "traduc", "translation", "traduction"], {
+        "es": "La Facultad de Idiomas ofrece dos licenciaturas: Enseñanza de Lenguas (LEL) y Traducción (LT), además del Técnico Superior Universitario (TSU), una opción con enfoque práctico y rápida salida al campo laboral. Consulta la convocatoria vigente en idiomas.mxl.uabc.mx o llama al 686-689-0825.",
+        "en": "The Faculty of Languages offers two bachelor's degrees: Language Teaching (LEL) and Translation (LT), plus a Higher University Technician (TSU) program with a practical focus and quick entry to the job market. To study Translation, check the current call at idiomas.mxl.uabc.mx or call 686-689-0825.",
+        "fr": "La Faculté de Langues propose deux licences : Enseignement des Langues (LEL) et Traduction (LT), ainsi qu'un Technicien Supérieur Universitaire (TSU), option pratique avec insertion rapide sur le marché du travail. Pour étudier la traduction, consultez l'appel en cours sur idiomas.mxl.uabc.mx ou appelez le 686-689-0825."}),
+    (["frances", "francés", "french", "français", "francais", "ingles", "inglés", "english", "anglais", "study", "estudiar", "etud", "curso", "cours", "cec", "horario"], {
+        "es": "El Centro de Enseñanza de Lenguas (CEC) ofrece cursos de inglés, francés, alemán, italiano, portugués, ruso, chino mandarín, japonés, coreano y español para extranjeros, en formatos semanal, sabatino, intensivo e intersemestral, con horarios matutinos, vespertinos y nocturnos. Los grupos de cada periodo se publican en cecuabc.com. Informes: recepcionmxl@uabc.edu.mx o al 686 841-82-91 ext. 300.",
+        "en": "The Language Teaching Center (CEC) offers courses in English, French, German, Italian, Portuguese, Russian, Mandarin, Japanese, Korean and Spanish for foreigners, in weekly, Saturday, intensive and inter-semester formats, morning, afternoon and evening. Groups are published each term at cecuabc.com. Info: recepcionmxl@uabc.edu.mx or 686 841-82-91 ext. 300.",
+        "fr": "Le Centre d'Enseignement des Langues (CEC) propose des cours d'anglais, de français, d'allemand, d'italien, de portugais, de russe, de mandarin, de japonais, de coréen et d'espagnol pour étrangers, en formats hebdomadaire, samedi, intensif et intersemestriel, matin, après-midi et soir. Les groupes sont publiés chaque semestre sur cecuabc.com. Infos : recepcionmxl@uabc.edu.mx ou 686 841-82-91 poste 300."}),
+    (["admision", "requisito", "admission"], {
+        "es": "Para ingresar a la Facultad de Idiomas necesitas: 1) concluir el bachillerato con promedio aprobatorio, 2) certificado de bachillerato, acta de nacimiento y CURP, 3) registrarte en el portal de admisiones cuando abra la convocatoria (agosto y enero), y 4) presentar el Examen de Selección institucional. No se requiere inglés avanzado: la Facultad te forma desde cero. Fechas en admision.uabc.mx.",
+        "en": "To enter the Faculty of Languages you need: 1) finish high school with a passing average, 2) high school certificate, birth certificate and CURP, 3) register on the admissions portal when the call opens (August and January), and 4) take the institutional Selection Exam. Advanced English is not required. Dates at admision.uabc.mx.",
+        "fr": "Pour entrer à la Faculté de Langues : 1) terminer le lycée avec une moyenne suffisante, 2) certificat de lycée, acte de naissance et CURP, 3) s'inscrire sur le portail d'admission (août et janvier), et 4) passer l'Examen de Sélection. L'anglais avancé n'est pas requis. Dates sur admision.uabc.mx."}),
+    (["que haces", "what do you do", "ayudar", "help", "sirves", "puedes hacer"], {
+        "es": "Puedo informarte sobre créditos y planes de estudio, cursos y horarios del CEC, requisitos de admisión, carreras y TSU, y avisos o fechas oficiales de la Facultad de Idiomas de la UABC en Mexicali, en español, inglés o francés: te leo o te escucho. ¿Qué te gustaría saber?",
+        "en": "I can help you with credits and study plans, CEC courses and schedules, admission requirements, degrees and TSU, and official notices and dates of the UABC Faculty of Languages in Mexicali, in Spanish, English or French: I read you or listen to you. What would you like to know?",
+        "fr": "Je peux vous renseigner sur les crédits et plans d'études, les cours et horaires du CEC, les conditions d'admission, les licences et le TSU, ainsi que les avis et dates officielles de la Faculté de Langues de l'UABC à Mexicali, en espagnol, anglais ou français : je te lis ou je t'écoute. Que souhaitez-vous savoir ?"}),
+]
+
+def _limpiar_doc(texto):
+    lineas = []
+    for ln in (texto or "").splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("===") or s.startswith("DOCUMENTO") or s.startswith("🖼️"):
+            continue
+        lineas.append(s)
+    return "\n".join(lineas)
+
+def _tokens(t):
+    return set(re.findall(r"[a-záéíóúñü]+", (t or "").lower()))
+
+def _es_valida(t):
+    if not t:
+        return False
+    if t.strip().endswith("?") and len(t) < 160:
+        return False
+    return True
+
+def _cargar_docs():
+    docs = {}
+    if os.path.isdir(CARPETA):
+        for fn in sorted(os.listdir(CARPETA)):
+            if fn.endswith(".txt"):
+                try:
+                    with open(os.path.join(CARPETA, fn), encoding="utf-8", errors="ignore") as f:
+                        docs[fn] = _limpiar_doc(f.read())
+                except Exception:
+                    continue
+    return docs
+
+def cargar_contexto(pregunta):
+    partes = []
+    try:
+        with open(MANUAL, encoding="utf-8", errors="ignore") as f:
+            partes.append(_limpiar_doc(f.read()))
+    except Exception:
+        pass
+    docs = _cargar_docs()
+    hoy = date.today()
+    horizonte = hoy + timedelta(days=14)
+    recientes = sorted(docs.keys(), reverse=True)[:2]
+    frescos = [fn for fn, t in docs.items() if any(hoy <= f <= horizonte for f in _fechas_doc(t))][:3]
+    qt = _tokens(pregunta)
+    scored = sorted(((len(qt & _tokens(t)), fn) for fn, t in docs.items()), reverse=True)
+    seleccion = []
+    for fn in recientes + frescos + [fn for _, fn in scored[:2]]:
+        if fn not in seleccion:
+            seleccion.append(fn)
+    for fn in seleccion[:5]:
+        partes.append(docs[fn])
+    return "\n\n".join(partes)[:12000]
+
+def respuesta_de_documentos(pregunta):
+    docs = _cargar_docs()
+    if not docs:
+        return ""
+    hoy = date.today()
+    horizonte = hoy + timedelta(days=14)
+    p = (pregunta or "").lower()
+    if any(k in p for k in ("semana", "evento", "hoy", "mañana", "pronto", "avisos", "hay")):
+        frescos = [t for t in docs.values() if any(hoy <= f <= horizonte for f in _fechas_doc(t))][:2]
+        if frescos:
+            return "📅 Según los avisos oficiales más recientes de la Facultad:\n\n" + "\n\n".join(t[:500] for t in frescos)
+    qt = _tokens(pregunta)
+    scored = sorted(((len(qt & _tokens(t)), t) for t in docs.values()), reverse=True)
+    if scored and scored[0][0] >= 3:
+        return "Según la información oficial de la Facultad: " + scored[0][1][:600]
+    return ""
+
+def sistema_prompt(contexto):
+    return (
+        f"Hoy es {fecha_hoy_es()}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
+        "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales, claros y concisos (máximo ~120 palabras salvo que pidan detalle). "
+        "NUNCA repitas la pregunta del usuario ni respondas con otra pregunta; entrega siempre información concreta. "
+        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy (con fecha, hora y lugar si los tienes); NUNCA cites fechas que ya pasaron ni te contradigas; si no hay eventos próximos, dilo y menciona la siguiente fecha importante futura. "
+        "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
+        "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
+        "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
+        f"\nINFORMACIÓN DISPONIBLE:\n{contexto}"
+    )
+
+def llamar_gemini(cliente, sp, hist, pregunta):
+    if not cliente:
+        return None
+    try:
+        contents = []
+        for m in hist:
+            contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
+        contents.append({"role": "user", "parts": [{"text": pregunta}]})
+        r = cliente.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config={"system_instruction": sp, "temperature": 0.1},
+        )
+        return (r.text or "").strip() or None
+    except Exception:
+        return None
+
+def llamar_openai(sp, hist, pregunta, url, key, modelos):
+    if not key:
+        return None
+    for modelo in modelos:
+        try:
+            msgs = [{"role": "system", "content": sp}] + hist + [{"role": "user", "content": pregunta}]
+            r = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": modelo, "messages": msgs, "temperature": 0.1},
+                timeout=15,
+            )
+            d = r.json()
+            t = (d["choices"][0]["message"]["content"] or "").strip()
+            if t:
+                return t
+        except Exception:
+            continue
+    return None
+
+def llamar_vision(url, key, modelos, b64, mime, prompt):
+    if not key:
+        return ""
+    for modelo in modelos:
+        try:
+            msgs = [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ]}]
+            r = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": modelo, "messages": msgs, "temperature": 0.1},
+                timeout=30,
+            )
+            d = r.json()
+            t = (d["choices"][0]["message"]["content"] or "").strip()
+            if t:
+                return t
+        except Exception:
+            continue
+    return ""
+
+def _vision_gemini(cliente, data, mime, prompt):
+    if not cliente:
+        return ""
+    for modelo in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"):
+        try:
+            r = cliente.models.generate_content(
+                model=modelo,
+                contents=[gtypes.Part(inline_data=gtypes.Blob(data=data, mime_type=mime)), prompt],
+            )
+            t = (r.text or "").strip()
+            if t:
+                return t
+        except Exception:
+            continue
+    return ""
+
+def extraer_imagen(data, mime="image/jpeg"):
+    errs = []
+    for i, cliente in enumerate((cliente_gemini, cliente_gemini2), 1):
+        t = _vision_gemini(cliente, data, mime, PROMPT_POSTER)
+        if t:
+            return t, ""
+        errs.append(f"Gemini{i} sin cuota de imagen")
+    b64 = base64.b64encode(data).decode()
+    t = llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"], b64, mime, PROMPT_POSTER)
+    if t:
+        return t, ""
+    errs.append("Groq visión no disponible")
+    t = llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free", "google/gemini-2.0-flash-001", "google/gemini-2.0-flash-exp:free"], b64, mime, PROMPT_POSTER)
+    if t:
+        return t, ""
+    errs.append("OpenRouter visión no disponible")
+    return "", " | ".join(errs)
+
+def probar_vision():
+    out = {}
+    for i, cliente in enumerate((cliente_gemini, cliente_gemini2), 1):
+        out[f"gemini{i}"] = bool(_vision_gemini(cliente, IMG_PRUEBA, "image/png", "Describe la imagen en una palabra."))
+    b64 = base64.b64encode(IMG_PRUEBA).decode()
+    out["groq"] = bool(llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview"], b64, "image/png", "Describe la imagen en una palabra."))
+    out["openrouter"] = bool(llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free"], b64, "image/png", "Describe la imagen en una palabra."))
+    return out
+
+def _cargar_cache():
+    try:
+        with open(CACHE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _guardar_cache(c):
+    try:
+        with open(CACHE, "w", encoding="utf-8") as f:
+            json.dump(c, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+def _es_cacheable(texto):
+    t = (texto or "").lower()
+    return not (texto.startswith("⚠️") or texto.startswith("📅") or texto.startswith("Según la información oficial") or len(texto) < 60 or "ayudarte hoy" in t or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
+
+def responder(pregunta, historial, lang_pref="auto"):
+    p = (pregunta or "").lower()
+    lang_detect = detectar_idioma(pregunta)
+    lang = lang_pref if lang_pref in ("es", "en", "fr") else lang_detect
+    for claves, trad in MEMORIA_OFICIAL:
+        if any(k in p for k in claves):
+            return trad.get(lang, trad["es"]), lang
+    clave = p.strip()[:120]
+    cache = _cargar_cache()
+    if clave in cache:
+        return cache[clave][0], cache[clave][1]
+    contexto = cargar_contexto(pregunta)
+    sp = sistema_prompt(contexto)
+    suf = {"es": " (Responde en español, conciso.)", "en": " (Answer in English, concise.)", "fr": " (Réponds en français, concis.)"}[lang]
+    pregunta_final = pregunta + suf
+    hist = []
+    for m in (historial or []):
+        if isinstance(m, dict) and isinstance(m.get("content"), str):
+            hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
+    texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
+    if not _es_valida(texto):
+        texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final)
+    if not _es_valida(texto):
+        texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "meta-llama/llama-3.3-70b-instruct:free"])
+    if not _es_valida(texto):
+        texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
+    if not _es_valida(texto):
+        fb = respuesta_de_documentos(pregunta)
+        if fb:
+            return fb, lang
+    if not _es_valida(texto):
+        texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
+    texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
+    if _es_cacheable(texto):
+        cache[clave] = [texto, lang]
+        _guardar_cache(cache)
+    return texto, lang
+
+def transcribir_groq(data):
+    if not GROQ_KEY:
+        return ""
+    try:
+        r = requests.post(
+            GROQ_URL.replace("/chat/completions", "/audio/transcriptions"),
+            headers={"Authorization": f"Bearer {GROQ_KEY}"},
+            files={"file": ("voz.webm", data, "audio/webm")},
+            data={"model": "whisper-large-v3"},
+            timeout=60,
+        )
+        return (r.json().get("text") or "").strip()
+    except Exception:
+        return ""
+
+def transcribir(audio_bytes):
+    for cliente in (cliente_gemini, cliente_gemini2):
+        if not cliente:
+            continue
+        for mime in ("audio/webm", "audio/wav", "audio/mp3", "audio/ogg"):
+            try:
+                r = cliente.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=[
+                        gtypes.Part(inline_data=gtypes.Blob(data=audio_bytes, mime_type=mime)),
+                        "Transcribe textualmente este audio (español, inglés o francés). Devuelve solo la transcripción.",
+                    ],
+                )
+                t = (r.text or "").strip()
+                if t:
+                    return t, detectar_idioma(t)
+            except Exception:
+                continue
+    t = transcribir_groq(audio_bytes)
+    if t:
+        return t, detectar_idioma(t)
+    return "", "es"
+
+async def generar_voz(texto, lang):
+    try:
+        import edge_tts
+        voz = VOCES.get(lang, VOCES["es"])
+        ruta = os.path.join(tempfile.gettempdir(), "respuesta_uabc.mp3")
+        c = edge_tts.Communicate(texto, voz)
+        await c.save(ruta)
+        return ruta
+    except Exception:
+        return None
+
+# ================= SERVICIOS =================
 app = FastAPI()
 
 FAQ = [
@@ -59,8 +441,6 @@ FAQ = [
     (["admision", "requisito", "inscri"], "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"),
     (["carrera", "tsu", "tecnico", "técnico"], "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"),
 ]
-
-EXT_IMG = (".png", ".jpg", ".jpeg", ".webp")
 
 def _jload(p, d={}):
     try:
@@ -95,11 +475,11 @@ def github_subir(ruta_repo, contenido_bytes):
     try:
         url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
         headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
-        r = http_requests.get(url, headers=headers, timeout=15)
+        r = requests.get(url, headers=headers, timeout=15)
         data = {"message": f"bot: actualiza {ruta_repo}", "content": base64.b64encode(contenido_bytes).decode()}
         if r.status_code == 200 and r.json().get("sha"):
             data["sha"] = r.json()["sha"]
-        q = http_requests.put(url, json=data, headers=headers, timeout=25)
+        q = requests.put(url, json=data, headers=headers, timeout=25)
         return "☁️ Respaldo permanente en GitHub listo." if q.status_code in (200, 201) else "⚠️ No se pudo respaldar en GitHub."
     except Exception:
         return "⚠️ No se pudo respaldar en GitHub."
@@ -110,9 +490,9 @@ def github_borrar(ruta_repo):
     try:
         url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
         headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
-        r = http_requests.get(url, headers=headers, timeout=15)
+        r = requests.get(url, headers=headers, timeout=15)
         if r.status_code == 200 and r.json().get("sha"):
-            http_requests.delete(url, json={"message": f"bot: borra {ruta_repo}", "sha": r.json()["sha"]}, headers=headers, timeout=25)
+            requests.delete(url, json={"message": f"bot: borra {ruta_repo}", "sha": r.json()["sha"]}, headers=headers, timeout=25)
     except Exception:
         pass
 
@@ -165,13 +545,12 @@ def router(msg, hist, state, lang_pref):
         state["pending"] = True
         return "🔐 Para entrar al modo de administración, escribe la clave de acceso.", None, state
     pregunta = normalizar_faq(texto)
-    suf = {"es": "\n(Responde en español.)", "en": "\n(Answer in English.)", "fr": "\n(Réponds en français.)"}.get(lang_pref, "")
     try:
-        respuesta, lang = responder(pregunta + suf, hist or [])
+        respuesta, lang = responder(pregunta, hist or [], lang_pref)
     except Exception:
-        respuesta, lang = responder(pregunta, [])
+        respuesta, lang = responder(pregunta, [], lang_pref)
     respuesta = limpiar_tags(respuesta)
-    return respuesta, lang if lang_pref == "auto" else lang_pref, state
+    return respuesta, lang, state
 
 async def producir_audio(respuesta, lang):
     try:
@@ -318,7 +697,7 @@ async def api_upload(archivo: UploadFile = File(None), categoria: str = Form("Av
     if ext in EXT_IMG:
         mime = "image/png" if ext == ".png" else "image/jpeg"
         if not texto:
-            texto, err_vis = _sist.extraer_imagen(data, mime)
+            texto, err_vis = extraer_imagen(data, mime)
         else:
             err_vis = ""
         if not texto:
@@ -370,16 +749,16 @@ async def cache_clear(clave: str = ""):
     if clave != CLAVE_ADMIN:
         return {"ok": False}
     try:
-        os.remove(os.path.join(BASE, "cache.json"))
+        os.remove(CACHE)
     except Exception:
         pass
     return {"ok": True}
 
 @app.get("/api/debug")
 async def api_debug():
-    out = {"gemini": bool(_sist.cliente_gemini), "groq": bool(_sist.GROQ_KEY), "openrouter": bool(_sist.OR_KEY)}
+    out = {"gemini": bool(cliente_gemini), "groq": bool(GROQ_KEY), "openrouter": bool(OR_KEY)}
     try:
-        t, l = _sist.responder("Di solo la palabra: listo", [])
+        t, l = responder("Di solo la palabra: listo", [])
         out["respuesta"] = t[:100]
     except Exception as e:
         out["error_texto"] = f"{type(e).__name__}: {e}"
@@ -387,7 +766,7 @@ async def api_debug():
 
 @app.get("/api/debug_vision")
 async def api_debug_vision():
-    return _sist.probar_vision()
+    return probar_vision()
 
 @app.post("/api/conv/save")
 async def conv_save(req: Request):
@@ -592,7 +971,18 @@ let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = n
 let currentUser = localStorage.getItem('uabc_user') || "";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const BIENVENIDAS = {
+  es: '👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Te atiendo en español, inglés o francés: <b>te leo o te escucho</b>. Toca una opción o escribe/dime tu pregunta.',
+  en: '👋 Hi! I am <b>UABCBot Idiomas</b>, the assistant of the UABC Faculty of Languages in Mexicali. I serve you in Spanish, English or French: <b>I read you or listen to you</b>. Tap an option or type/say your question.',
+  fr: '👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>, l’assistant de la Faculté de Langues de l’UABC à Mexicali. Je t’aide en espagnol, anglais ou français : <b>je te lis ou je t’écoute</b>. Touche une option ou écris/dis ta question.'
+};
+const NOTAS = {
+  es: 'Personal docente: escribe o di "administración". Si una respuesta no te resuelve, toca 🚩.',
+  en: 'Faculty staff: type or say "administración". If an answer doesn’t help you, tap 🚩.',
+  fr: 'Personnel : écris ou dis « administración ». Si une réponse ne t’aide pas, touche 🚩.'
+};
 function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function langUI(){ return (langPref in BIENVENIDAS) ? langPref : 'es'; }
 function avisar(msg, tipo){
   const t = document.getElementById('toast');
   t.innerText = msg;
@@ -609,6 +999,7 @@ function bubble(role, text, audio){
   return d;
 }
 async function welcome(){
+  const L = langUI();
   let opts = [
     {q:"¿Cuántos créditos necesito para titularme en Traducción?", t:"💳 Créditos para titularme"},
     {q:"¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t:"📅 Horarios del CEC"},
@@ -620,9 +1011,9 @@ async function welcome(){
     if (d && d.length) opts = d.map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
   } catch(e) {}
   const d = document.createElement('div'); d.className = 'msg bot';
-  d.innerHTML = '<div class="bub">👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.<div class="opts">'
+  d.innerHTML = '<div class="bub">' + BIENVENIDAS[L] + '<div class="opts">'
     + opts.map(o => '<button data-q="' + esc(o.q) + '">' + esc(o.t) + '</button>').join('')
-    + '</div><span class="nota">Personal docente: escribe o di "administración". Si una respuesta no te resuelve, toca 🚩.</span></div>';
+    + '</div><span class="nota">' + NOTAS[L] + '</span></div>';
   chat.appendChild(d);
   d.querySelectorAll('[data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
   chat.scrollTop = chat.scrollHeight;
@@ -725,7 +1116,13 @@ document.getElementById('ulin').onclick = async () => {
 document.getElementById('uguest').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
 document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
-  document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
+  document.getElementById(id).onclick = e => {
+    langPref = v;
+    document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on'));
+    e.target.classList.add('on');
+    if (!hist.length) { chat.innerHTML = ''; welcome(); }
+    else avisar(v === 'auto' ? ' AUTO: español por defecto; si te leo o escucho en otro idioma, te contesto en ese idioma.' : '🌐 Idioma del bot: ' + v.toUpperCase());
+  };
 });
 const drop = document.getElementById('drop');
 function marcarArchivo(f){
@@ -758,7 +1155,7 @@ mic.onclick = async () => {
     saveConv();
   };
   rec.start(); mic.classList.add('rec');
-  avisar('🎤 Grabando tu pregunta… toca el micrófono para terminar.');
+  avisar('🎤 Grabando tu pregunta… toca el micrófono para terminar. Te escucho en español, inglés o francés.');
 };
 document.getElementById('gear').onclick = () => { const d = document.getElementById('drawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; };
 document.getElementById('salirp').onclick = () => { state = {pending:false, active:false}; document.getElementById('drawer').style.display = 'none'; document.getElementById('zona').style.display = 'none'; };
