@@ -47,6 +47,8 @@ MESES_INV = {v: k for k, v in MESES.items()}
 
 PROMPT_POSTER = "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios."
 
+IMG_PRUEBA = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
 def fecha_hoy_es():
     n = datetime.now()
     return f"{DIAS[n.weekday()]} {n.day} de {MESES[n.month]} de {n.year}"
@@ -233,6 +235,49 @@ def llamar_vision(url, key, modelos, b64, mime, prompt):
             continue
     return ""
 
+def _vision_gemini(cliente, data, mime, prompt):
+    if not cliente:
+        return ""
+    for modelo in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"):
+        try:
+            r = cliente.models.generate_content(
+                model=modelo,
+                contents=[gtypes.Part(inline_data=gtypes.Blob(data=data, mime_type=mime)), prompt],
+            )
+            t = (r.text or "").strip()
+            if t:
+                return t
+        except Exception:
+            continue
+    return ""
+
+def extraer_imagen(data, mime="image/jpeg"):
+    errs = []
+    for i, cliente in enumerate((_clientes_gemini()), 1):
+        t = _vision_gemini(cliente, data, mime, PROMPT_POSTER)
+        if t:
+            return t, ""
+        errs.append(f"Gemini{i} sin cuota de imagen")
+    b64 = base64.b64encode(data).decode()
+    t = llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"], b64, mime, PROMPT_POSTER)
+    if t:
+        return t, ""
+    errs.append("Groq visión no disponible")
+    t = llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free", "google/gemini-2.0-flash-001", "google/gemini-2.0-flash-exp:free"], b64, mime, PROMPT_POSTER)
+    if t:
+        return t, ""
+    errs.append("OpenRouter visión no disponible")
+    return "", " | ".join(errs)
+
+def probar_vision():
+    out = {}
+    for i, cliente in enumerate((cliente_gemini, cliente_gemini2), 1):
+        out[f"gemini{i}"] = bool(_vision_gemini(cliente, IMG_PRUEBA, "image/png", "Describe la imagen en una palabra."))
+    b64 = base64.b64encode(IMG_PRUEBA).decode()
+    out["groq"] = bool(llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview"], b64, "image/png", "Describe la imagen en una palabra."))
+    out["openrouter"] = bool(llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free"], b64, "image/png", "Describe la imagen en una palabra."))
+    return out
+
 def _cargar_cache():
     try:
         with open(CACHE, encoding="utf-8") as f:
@@ -320,31 +365,6 @@ def transcribir(audio_bytes):
     if t:
         return t, detectar_idioma(t)
     return "", "es"
-
-def extraer_imagen(data, mime="image/jpeg"):
-    for cliente in _clientes_gemini():
-        for intento in (1, 2):
-            try:
-                r = cliente.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=[
-                        gtypes.Part(inline_data=gtypes.Blob(data=data, mime_type=mime)),
-                        PROMPT_POSTER,
-                    ],
-                )
-                t = (r.text or "").strip()
-                if t:
-                    return t
-            except Exception:
-                time.sleep(1)
-    b64 = base64.b64encode(data).decode()
-    t = llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"], b64, mime, PROMPT_POSTER)
-    if t:
-        return t
-    t = llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free", "google/gemini-2.0-flash-exp:free"], b64, mime, PROMPT_POSTER)
-    if t:
-        return t
-    return ""
 
 async def generar_voz(texto, lang):
     try:
