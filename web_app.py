@@ -23,6 +23,7 @@ MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
 CARPETA = os.path.join(BASE, "datos_bot")
 AUDIOS = os.path.join(BASE, "audios")
 IMGS = os.path.join(BASE, "posters")
+CAPTURAS = os.path.join(BASE, "capturas")
 CONVS = os.path.join(BASE, "conversaciones")
 FEEDBACK = os.path.join(BASE, "feedback")
 CACHE = os.path.join(BASE, "cache.json")
@@ -39,7 +40,7 @@ OR_URL = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
-for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK):
+for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK, CAPTURAS):
     os.makedirs(d, exist_ok=True)
 
 def _mk_client(k):
@@ -364,11 +365,12 @@ def responder(pregunta, historial, lang_pref="auto"):
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
+    # 🔥 DeepSeek V4 Flash 0731 como motor #1 (el más fuerte en Academia, baratísimo)
+    texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["deepseek/deepseek-v4-flash:free", "deepseek/deepseek-chat-v3.1:free", "meta-llama/llama-3.3-70b-instruct:free"])
+    if not _es_valida(texto):
+        texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
     if not _es_valida(texto):
         texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final)
-    if not _es_valida(texto):
-        texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "meta-llama/llama-3.3-70b-instruct:free"])
     if not _es_valida(texto):
         texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
     if not _es_valida(texto):
@@ -469,14 +471,15 @@ def normalizar_faq(texto):
 def limpiar_tags(texto):
     return re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto or "").strip()
 
-def github_subir(ruta_repo, contenido_bytes):
+def github_subir(ruta_repo, contenido_bytes, es_binario=False):
     if not GH_TOKEN or not GH_REPO:
         return "(sin respaldo GitHub)"
     try:
         url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
         headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
         r = requests.get(url, headers=headers, timeout=15)
-        data = {"message": f"bot: actualiza {ruta_repo}", "content": base64.b64encode(contenido_bytes).decode()}
+        contenido_b64 = base64.b64encode(contenido_bytes).decode() if isinstance(contenido_bytes, (bytes, bytearray)) else base64.b64encode(contenido_bytes.encode("utf-8")).decode()
+        data = {"message": f"bot: actualiza {ruta_repo}", "content": contenido_b64}
         if r.status_code == 200 and r.json().get("sha"):
             data["sha"] = r.json()["sha"]
         q = requests.put(url, json=data, headers=headers, timeout=25)
@@ -674,8 +677,22 @@ async def api_feedback(req: Request):
     d = await req.json()
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     area = d.get("area", "Otro")
+    captura_b64 = d.get("captura", "")
+    captura_url = ""
+    if captura_b64:
+        try:
+            header, data_b64 = captura_b64.split(",", 1) if "," in captura_b64 else ("", captura_b64)
+            img_bytes = base64.b64decode(data_b64)
+            img_name = ts + ".png"
+            with open(os.path.join(CAPTURAS, img_name), "wb") as f:
+                f.write(img_bytes)
+            github_subir(f"capturas/{img_name}", img_bytes)
+            captura_url = f"/captura/{img_name}"
+        except Exception as e:
+            captura_url = f"(error al guardar captura: {e})"
     contenido = (
         f"=== Feedback {ts} | Área: {area} | Reenviar a: {AREAS_RESP.get(area, AREAS_RESP['Otro'])} ===\n"
+        f"CAPTURA: {captura_url or 'no disponible'}\n"
         f"PREGUNTA DEL USUARIO: {d.get('pregunta','')}\n"
         f"RESPUESTA DEL BOT: {d.get('respuesta','')}\n"
         f"COMENTARIO: {d.get('comentario','')}\n"
@@ -683,7 +700,11 @@ async def api_feedback(req: Request):
     with open(os.path.join(FEEDBACK, ts + ".txt"), "w", encoding="utf-8") as f:
         f.write(contenido)
     github_subir(f"feedback/{ts}.txt", contenido.encode("utf-8"))
-    return {"ok": True}
+    return {"ok": True, "captura": captura_url}
+
+@app.get("/captura/{nombre}")
+async def captura(nombre: str):
+    return FileResponse(os.path.join(CAPTURAS, nombre), media_type="image/png")
 
 @app.get("/api/feedback/list")
 async def api_feedback_list(clave: str = ""):
@@ -839,6 +860,7 @@ PAGINA = """
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UABCBot Idiomas — Facultad de Idiomas de la UABC en Mexicali</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
@@ -891,6 +913,7 @@ PAGINA = """
   #dlist { white-space: pre-wrap; background: #f7f9fa; border-radius: 8px; padding: 8px; margin-top: 6px; font-size: 12px; }
   .etiq { display: block; margin: 8px 0 2px; font-weight: 700; color: #00684a; }
   .ayuda { font-size: 11.5px; color: #667; margin-bottom: 4px; }
+  .fb-captura { margin-top: 8px; border: 1px solid #cfd8dc; border-radius: 8px; padding: 8px; text-align: center; background: #f7f9fa; font-size: 11.5px; color: #556; }
   @media (max-width: 900px) { #side { display: none; } #convs { display: block; } }
   @media (min-width: 900px) {
     .bub { font-size: 16.5px; }
@@ -941,6 +964,7 @@ PAGINA = """
       </select>
       <span class="etiq">Cuéntanos qué faltó</span>
       <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo la fecha exacta del examen de admisión…"></textarea>
+      <div id="fbprev" class="fb-captura">📸 Se adjuntará una captura de pantalla automática del chat.</div>
       <button id="fbsend">📨 Enviar al responsable</button>
     </div>
     <div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
@@ -982,7 +1006,7 @@ PAGINA = """
   </main>
 </div>
 <script>
-let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null, lastPregunta = "", lastRespuesta = "";
+let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null, lastPregunta = "", lastRespuesta = "", capturaPendiente = "";
 let currentUser = localStorage.getItem('uabc_user') || "";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1131,15 +1155,32 @@ document.getElementById('nuevo').onclick = nueva;
 document.getElementById('sidenew').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
-document.getElementById('fb').onclick = () => {
+document.getElementById('fb').onclick = async () => {
   if (!lastRespuesta) { avisar('⚠️ Aún no hay respuestas que reportar.', 'error'); return; }
+  // 📸 Captura automática del chat
+  try {
+    const canvas = await html2canvas(chat, {backgroundColor: '#eef1f4', scale: 1, useCORS: true, logging: false});
+    capturaPendiente = canvas.toDataURL('image/png');
+    document.getElementById('fbprev').innerHTML = '📸 Captura lista (' + Math.round(capturaPendiente.length/1024) + ' KB). Se adjuntará al enviar.';
+  } catch(e) {
+    capturaPendiente = "";
+    document.getElementById('fbprev').innerText = '⚠️ No se pudo capturar la pantalla, pero el reporte se enviará igual.';
+  }
   const d = document.getElementById('fbdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block';
 };
 document.getElementById('fbsend').onclick = async () => {
-  await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pregunta: lastPregunta, respuesta: lastRespuesta, comentario: document.getElementById('fbcom').value, area: document.getElementById('fbarea').value})});
+  avisar('⏳ Enviando reporte con captura...', 'warn');
+  const r = await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+    pregunta: lastPregunta, respuesta: lastRespuesta,
+    comentario: document.getElementById('fbcom').value,
+    area: document.getElementById('fbarea').value,
+    captura: capturaPendiente
+  })});
+  const d = await r.json();
   document.getElementById('fbcom').value = '';
   document.getElementById('fbdrawer').style.display = 'none';
-  avisar('📨 Gracias: tu reporte llegó al responsable del área y alimentará al bot.', 'ok');
+  capturaPendiente = "";
+  avisar('📨 Reporte y captura enviados al responsable. ¡Gracias por ayudar a mejorar el bot!', 'ok');
 };
 document.getElementById('ureg').onclick = async () => {
   const d = await (await fetch('/api/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
