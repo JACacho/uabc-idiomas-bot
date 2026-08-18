@@ -604,20 +604,21 @@ async def api_chat(req: Request):
         respuesta = f"⚠️ Error interno: {type(e).__name__}: {e}"
         audio = None
         state = st
-    return {"reply": respuesta, "audio": audio, "state": state}
+        lang = "es"
+    return {"reply": respuesta, "audio": audio, "state": state, "lang": lang}
 
 @app.post("/api/voice")
 async def api_voice(audio: UploadFile = File(...), hist: str = Form("[]"), state: str = Form("{}"), lang: str = Form("auto")):
     data = await audio.read()
     texto, _ = transcribir(data)
     if not texto:
-        return {"texto": "", "reply": "⚠️ No logré escuchar bien. Intenta de nuevo más cerca del micrófono.", "audio": None, "state": state}
+        return {"texto": "", "reply": "⚠️ No logré escuchar bien. Intenta de nuevo más cerca del micrófono.", "audio": None, "state": state, "lang": "es"}
     st = json.loads(state)
     if not (st.get("active") or st.get("pending")):
         log_uso(texto, lang, "voz")
     respuesta, lang2, state2 = router(texto, json.loads(hist), st, lang)
     aud = await producir_audio(respuesta, lang2)
-    return {"texto": texto, "reply": respuesta, "audio": aud, "state": state2}
+    return {"texto": texto, "reply": respuesta, "audio": aud, "state": state2, "lang": lang2}
 
 @app.post("/api/voice_note")
 async def voice_note(audio: UploadFile = File(...), categoria: str = Form("Avisos")):
@@ -653,6 +654,20 @@ async def report(req: Request):
 async def topfaq():
     c = Counter(normalizar_faq(l["texto"]) for l in leer_uso() if l.get("texto"))
     return [{"q": q, "n": n} for q, n in c.most_common(4)]
+
+@app.get("/api/tts")
+async def api_tts(texto: str = "", lang: str = "es"):
+    try:
+        ruta = await generar_voz(texto, lang if lang in VOCES else "es")
+        if ruta and os.path.exists(ruta):
+            nombre = str(uuid.uuid4()) + ".mp3"
+            destino = os.path.join(AUDIOS, nombre)
+            with open(ruta, "rb") as o, open(destino, "wb") as d:
+                d.write(o.read())
+            return {"url": "/audio/" + nombre}
+    except Exception:
+        pass
+    return {"url": ""}
 
 @app.post("/api/feedback")
 async def api_feedback(req: Request):
@@ -890,14 +905,14 @@ PAGINA = """
 <div id="toast"></div>
 <div class="wrap">
   <aside id="side">
-    <b>🗂️ Conversaciones</b>
-    <button id="nueva">➕ Nueva conversación</button>
+    <b id="sidet">🗂️ Conversaciones</b>
+    <button id="sidenew">➕ Nueva conversación</button>
     <div id="lista"></div>
   </aside>
   <main>
     <header>
       <img src="/logo.png" alt="logo">
-      <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas de la UABC en Mexicali</p></div>
+      <div><h1>UABCBot Idiomas</h1><p id="hsub">Facultad de Idiomas de la UABC en Mexicali</p></div>
       <div class="langs">
         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
       </div>
@@ -976,13 +991,30 @@ const BIENVENIDAS = {
   en: '👋 Hi! I am <b>UABCBot Idiomas</b>, the assistant of the UABC Faculty of Languages in Mexicali. I serve you in Spanish, English or French: <b>I read you or listen to you</b>. Tap an option or type/say your question.',
   fr: '👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>, l’assistant de la Faculté de Langues de l’UABC à Mexicali. Je t’aide en espagnol, anglais ou français : <b>je te lis ou je t’écoute</b>. Touche une option ou écris/dis ta question.'
 };
+const TXT_BIENVENIDAS = {
+  es: '¡Hola! Soy UABCBot Idiomas, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Te atiendo en español, inglés o francés: te leo o te escucho. Toca una opción, o escribe o dime tu pregunta.',
+  en: 'Hi! I am UABCBot Idiomas, the assistant of the UABC Faculty of Languages in Mexicali. I serve you in Spanish, English or French: I read you or listen to you. Tap an option, or type or say your question.',
+  fr: 'Bonjour ! Je suis UABCBot Idiomas, l’assistant de la Faculté de Langues de l’UABC à Mexicali. Je t’aide en espagnol, anglais ou français : je te lis ou je t’écoute. Touche une option, ou écris ou dis ta question.'
+};
 const NOTAS = {
   es: 'Personal docente: escribe o di "administración". Si una respuesta no te resuelve, toca 🚩.',
   en: 'Faculty staff: type or say "administración". If an answer doesn’t help you, tap 🚩.',
   fr: 'Personnel : écris ou dis « administración ». Si une réponse ne t’aide pas, touche 🚩.'
 };
+const UI = {
+  es: {sub: "Facultad de Idiomas de la UABC en Mexicali", side: "🗂️ Conversaciones", new: "➕ Nueva conversación", ph: "Escribe o dime tu pregunta…"},
+  en: {sub: "Faculty of Languages of UABC in Mexicali", side: "🗂️ Conversations", new: "➕ New conversation", ph: "Type or say your question…"},
+  fr: {sub: "Faculté de Langues de l’UABC à Mexicali", side: "🗂️ Conversations", new: "➕ Nouvelle conversation", ph: "Écris ou dis ta question…"}
+};
 function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function langUI(){ return (langPref in BIENVENIDAS) ? langPref : 'es'; }
+function applyLang(L){
+  const u = UI[L] || UI.es;
+  document.getElementById('hsub').innerText = u.sub;
+  document.getElementById('sidet').innerText = u.side;
+  document.getElementById('sidenew').innerText = u.new;
+  document.getElementById('inp').placeholder = u.ph;
+}
 function avisar(msg, tipo){
   const t = document.getElementById('toast');
   t.innerText = msg;
@@ -1000,6 +1032,7 @@ function bubble(role, text, audio){
 }
 async function welcome(){
   const L = langUI();
+  applyLang(L);
   let opts = [
     {q:"¿Cuántos créditos necesito para titularme en Traducción?", t:"💳 Créditos para titularme"},
     {q:"¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t:"📅 Horarios del CEC"},
@@ -1016,6 +1049,14 @@ async function welcome(){
     + '</div><span class="nota">' + NOTAS[L] + '</span></div>';
   chat.appendChild(d);
   d.querySelectorAll('[data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
+  try {
+    const a = await (await fetch('/api/tts?lang=' + L + '&texto=' + encodeURIComponent(TXT_BIENVENIDAS[L]))).json();
+    if (a.url) {
+      const au = document.createElement('audio');
+      au.controls = true; au.src = a.url;
+      d.querySelector('.bub').appendChild(au);
+    }
+  } catch(e) {}
   chat.scrollTop = chat.scrollHeight;
 }
 function thinking(){
@@ -1076,6 +1117,7 @@ async function send(msg){
   const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg, hist: hist.slice(-7), state, lang: langPref})});
   const d = await r.json(); removeThink(); state = d.state;
   lastRespuesta = d.reply;
+  if (langPref === 'auto' && d.lang) applyLang(d.lang);
   hist.push({role:'assistant', content: d.reply, audio: d.audio}); bubble('bot', d.reply, d.audio);
   saveConv();
 }
@@ -1086,7 +1128,7 @@ async function loadDocs(){
 document.getElementById('send').onclick = () => send(inp.value);
 inp.onkeydown = e => { if (e.key === 'Enter') send(inp.value); };
 document.getElementById('nuevo').onclick = nueva;
-document.getElementById('nueva').onclick = nueva;
+document.getElementById('sidenew').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
 document.getElementById('fb').onclick = () => {
@@ -1120,8 +1162,9 @@ document.getElementById('uout').onclick = () => { currentUser = ""; localStorage
     langPref = v;
     document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on'));
     e.target.classList.add('on');
+    applyLang(langUI());
     if (!hist.length) { chat.innerHTML = ''; welcome(); }
-    else avisar(v === 'auto' ? ' AUTO: español por defecto; si te leo o escucho en otro idioma, te contesto en ese idioma.' : '🌐 Idioma del bot: ' + v.toUpperCase());
+    else avisar(v === 'auto' ? ' AUTO: español por defecto; si te leo o escucho en otro idioma, todo cambia a ese idioma.' : '🌐 Interfaz y respuestas en ' + v.toUpperCase());
   };
 });
 const drop = document.getElementById('drop');
@@ -1150,6 +1193,7 @@ mic.onclick = async () => {
     fd.append('lang', langPref);
     const d = await (await fetch('/api/voice', {method:'POST', body: fd})).json();
     removeThink(); state = d.state;
+    if (langPref === 'auto' && d.lang) applyLang(d.lang);
     if (d.texto) { bubble('user', '🎤 ' + d.texto); hist.push({role:'user', content: d.texto}); lastPregunta = d.texto; }
     if (d.reply) { bubble('bot', d.reply, d.audio); hist.push({role:'assistant', content: d.reply, audio: d.audio}); lastRespuesta = d.reply; }
     saveConv();
