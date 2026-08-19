@@ -43,6 +43,8 @@ LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo
 for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK, CAPTURAS):
     os.makedirs(d, exist_ok=True)
 
+CATS_INTERNAS = ("clases", "tareas", "internos")
+
 def _mk_client(k):
     if not k:
         return None
@@ -153,7 +155,7 @@ def _limpiar_doc(texto):
     return "\n".join(lineas)
 
 def _tokens(t):
-    return set(re.findall(r"[a-záéíóúñü]+", (t or "").lower()))
+    return set(re.findall(r"[a-záéíóúñü$0-9]+", (t or "").lower()))
 
 def _es_valida(t):
     if not t:
@@ -162,11 +164,17 @@ def _es_valida(t):
         return False
     return True
 
-def _cargar_docs():
+def _es_interno_doc(fn):
+    low = fn.lower()
+    return any(f"_{c}" in low for c in CATS_INTERNAS)
+
+def _cargar_docs(rol="externo"):
     docs = {}
     if os.path.isdir(CARPETA):
         for fn in sorted(os.listdir(CARPETA)):
             if fn.endswith(".txt"):
+                if rol != "interno" and _es_interno_doc(fn):
+                    continue
                 try:
                     with open(os.path.join(CARPETA, fn), encoding="utf-8", errors="ignore") as f:
                         docs[fn] = _limpiar_doc(f.read())
@@ -174,14 +182,14 @@ def _cargar_docs():
                     continue
     return docs
 
-def cargar_contexto(pregunta):
+def cargar_contexto(pregunta, rol="externo"):
     partes = []
     try:
         with open(MANUAL, encoding="utf-8", errors="ignore") as f:
             partes.append(_limpiar_doc(f.read()))
     except Exception:
         pass
-    docs = _cargar_docs()
+    docs = _cargar_docs(rol)
     hoy = date.today()
     horizonte = hoy + timedelta(days=14)
     recientes = sorted(docs.keys(), reverse=True)[:2]
@@ -196,8 +204,8 @@ def cargar_contexto(pregunta):
         partes.append(docs[fn])
     return "\n\n".join(partes)[:12000]
 
-def respuesta_de_documentos(pregunta):
-    docs = _cargar_docs()
+def respuesta_de_documentos(pregunta, rol="externo"):
+    docs = _cargar_docs(rol)
     if not docs:
         return ""
     hoy = date.today()
@@ -213,15 +221,22 @@ def respuesta_de_documentos(pregunta):
         return "Según la información oficial de la Facultad: " + scored[0][1][:600]
     return ""
 
-def sistema_prompt(contexto):
+def sistema_prompt(contexto, rol="externo"):
+    extra = ""
+    if rol != "interno":
+        extra = " El usuario es público general/aspirante: NO reveles información interna de clases, tareas o extensiones; si preguntan por ello, indica que esa información es para la comunidad UABC con cuenta institucional. "
+    else:
+        extra = " El usuario es de la comunidad UABC (@uabc.edu.mx): puedes incluir avisos internos de clases, tareas y extensiones. "
     return (
         f"Hoy es {fecha_hoy_es()}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
         "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales, claros y concisos (máximo ~120 palabras salvo que pidan detalle). "
+        "Si preguntan por COSTOS o PRECIOS, da la cifra exacta que aparezca en la INFORMACIÓN DISPONIBLE (monto, moneda y a quién aplica); si no aparece, indica consultar la convocatoria vigente en cecuabc.com o al 686 841-82-91 ext. 300. "
         "NUNCA repitas la pregunta del usuario ni respondas con otra pregunta; entrega siempre información concreta. "
-        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy (con fecha, hora y lugar si los tienes); NUNCA cites fechas que ya pasaron ni te contradigas; si no hay eventos próximos, dilo y menciona la siguiente fecha importante futura. "
+        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy (con fecha, hora y lugar si los tienes); NUNCA cites fechas que ya pasaron ni te contradigas. "
         "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
         "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
         "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
+        + extra +
         f"\nINFORMACIÓN DISPONIBLE:\n{contexto}"
     )
 
@@ -346,27 +361,29 @@ def _es_cacheable(texto):
     t = (texto or "").lower()
     return not (texto.startswith("⚠️") or texto.startswith("📅") or texto.startswith("Según la información oficial") or len(texto) < 60 or "ayudarte hoy" in t or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
 
-def responder(pregunta, historial, lang_pref="auto"):
+def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     p = (pregunta or "").lower()
     lang_detect = detectar_idioma(pregunta)
     lang = lang_pref if lang_pref in ("es", "en", "fr") else lang_detect
-    for claves, trad in MEMORIA_OFICIAL:
-        if any(k in p for k in claves):
-            return trad.get(lang, trad["es"]), lang
-    clave = p.strip()[:120]
+    es_costo = any(k in p for k in ("cuanto", "cuánto", "cuesta", "costo", "precio", "inscri"))
+    if not es_costo:
+        for claves, trad in MEMORIA_OFICIAL:
+            if any(k in p for k in claves):
+                return trad.get(lang, trad["es"]), lang
+    clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()
     if clave in cache:
         return cache[clave][0], cache[clave][1]
-    contexto = cargar_contexto(pregunta)
-    sp = sistema_prompt(contexto)
+    contexto = cargar_contexto(pregunta, rol)
+    sp = sistema_prompt(contexto, rol)
     suf = {"es": " (Responde en español, conciso.)", "en": " (Answer in English, concise.)", "fr": " (Réponds en français, concis.)"}[lang]
     pregunta_final = pregunta + suf
     hist = []
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    # 🔥 DeepSeek V4 Flash 0731 como motor #1 (el más fuerte en Academia, baratísimo)
-    texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["deepseek/deepseek-v4-flash:free", "deepseek/deepseek-chat-v3.1:free", "meta-llama/llama-3.3-70b-instruct:free"])
+    # 💰 Motor de PAGO primero (DeepSeek V4 Flash, el #1 en Academia y baratísimo)
+    texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["deepseek/deepseek-v4-flash", "deepseek/deepseek-chat-v3.1", "meta-llama/llama-3.3-70b-instruct:free"])
     if not _es_valida(texto):
         texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
     if not _es_valida(texto):
@@ -374,7 +391,7 @@ def responder(pregunta, historial, lang_pref="auto"):
     if not _es_valida(texto):
         texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
     if not _es_valida(texto):
-        fb = respuesta_de_documentos(pregunta)
+        fb = respuesta_de_documentos(pregunta, rol)
         if fb:
             return fb, lang
     if not _es_valida(texto):
@@ -471,15 +488,14 @@ def normalizar_faq(texto):
 def limpiar_tags(texto):
     return re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto or "").strip()
 
-def github_subir(ruta_repo, contenido_bytes, es_binario=False):
+def github_subir(ruta_repo, contenido_bytes):
     if not GH_TOKEN or not GH_REPO:
         return "(sin respaldo GitHub)"
     try:
         url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
         headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
         r = requests.get(url, headers=headers, timeout=15)
-        contenido_b64 = base64.b64encode(contenido_bytes).decode() if isinstance(contenido_bytes, (bytes, bytearray)) else base64.b64encode(contenido_bytes.encode("utf-8")).decode()
-        data = {"message": f"bot: actualiza {ruta_repo}", "content": contenido_b64}
+        data = {"message": f"bot: actualiza {ruta_repo}", "content": base64.b64encode(contenido_bytes).decode()}
         if r.status_code == 200 and r.json().get("sha"):
             data["sha"] = r.json()["sha"]
         q = requests.put(url, json=data, headers=headers, timeout=25)
@@ -529,14 +545,14 @@ def extraer_texto(ruta, nombre):
     with open(ruta, encoding="utf-8", errors="ignore") as f:
         return f.read()
 
-def router(msg, hist, state, lang_pref):
+def router(msg, hist, state, lang_pref, rol="externo"):
     state = state or {"pending": False, "active": False}
     texto = (msg or "").strip()
     if state.get("pending"):
         state["pending"] = False
         if texto == CLAVE_ADMIN:
             state["active"] = True
-            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o usa el panel ⚙️ para documentos, pósters y notas de voz). Escribe SALIR para cerrar.", None, state
+            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o usa el panel ⚙️ para documentos, pósters y notas de voz; usa categoría Clases para info interna). Escribe SALIR para cerrar.", None, state
         return "❌ Clave incorrecta.", None, state
     if state.get("active"):
         if texto.upper() == "SALIR":
@@ -549,9 +565,9 @@ def router(msg, hist, state, lang_pref):
         return "🔐 Para entrar al modo de administración, escribe la clave de acceso.", None, state
     pregunta = normalizar_faq(texto)
     try:
-        respuesta, lang = responder(pregunta, hist or [], lang_pref)
+        respuesta, lang = responder(pregunta, hist or [], lang_pref, rol)
     except Exception:
-        respuesta, lang = responder(pregunta, [], lang_pref)
+        respuesta, lang = responder(pregunta, [], lang_pref, rol)
     respuesta = limpiar_tags(respuesta)
     return respuesta, lang, state
 
@@ -579,9 +595,10 @@ async def api_register(req: Request):
     if u in users:
         return {"ok": False, "error": "Ese usuario ya existe; inicia sesión."}
     salt = secrets.token_hex(8)
-    users[u] = {"salt": salt, "hash": _hash(c, salt)}
+    rol = "interno" if u.endswith("@uabc.edu.mx") else "externo"
+    users[u] = {"salt": salt, "hash": _hash(c, salt), "rol": rol}
     _jdump(USERS, users)
-    return {"ok": True, "usuario": u}
+    return {"ok": True, "usuario": u, "rol": rol}
 
 @app.post("/api/login")
 async def api_login(req: Request):
@@ -592,16 +609,17 @@ async def api_login(req: Request):
     rec = users.get(u)
     if not rec or rec["hash"] != _hash(c, rec["salt"]):
         return {"ok": False, "error": "Usuario o clave incorrectos."}
-    return {"ok": True, "usuario": u}
+    return {"ok": True, "usuario": u, "rol": rec.get("rol", "externo")}
 
 @app.post("/api/chat")
 async def api_chat(req: Request):
     d = await req.json()
     st = d.get("state") or {}
+    rol = d.get("rol", "externo")
     if not (st.get("active") or st.get("pending")):
         log_uso(d.get("msg", ""), d.get("lang", "auto"), "texto")
     try:
-        respuesta, lang, state = router(d.get("msg"), d.get("hist"), st, d.get("lang", "auto"))
+        respuesta, lang, state = router(d.get("msg"), d.get("hist"), st, d.get("lang", "auto"), rol)
         audio = await producir_audio(respuesta, lang)
     except Exception as e:
         respuesta = f"⚠️ Error interno: {type(e).__name__}: {e}"
@@ -611,7 +629,7 @@ async def api_chat(req: Request):
     return {"reply": respuesta, "audio": audio, "state": state, "lang": lang}
 
 @app.post("/api/voice")
-async def api_voice(audio: UploadFile = File(...), hist: str = Form("[]"), state: str = Form("{}"), lang: str = Form("auto")):
+async def api_voice(audio: UploadFile = File(...), hist: str = Form("[]"), state: str = Form("{}"), lang: str = Form("auto"), rol: str = Form("externo")):
     data = await audio.read()
     texto, _ = transcribir(data)
     if not texto:
@@ -619,7 +637,7 @@ async def api_voice(audio: UploadFile = File(...), hist: str = Form("[]"), state
     st = json.loads(state)
     if not (st.get("active") or st.get("pending")):
         log_uso(texto, lang, "voz")
-    respuesta, lang2, state2 = router(texto, json.loads(hist), st, lang)
+    respuesta, lang2, state2 = router(texto, json.loads(hist), st, lang, rol)
     aud = await producir_audio(respuesta, lang2)
     return {"texto": texto, "reply": respuesta, "audio": aud, "state": state2, "lang": lang2}
 
@@ -948,7 +966,7 @@ PAGINA = """
     <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
       <b>👤 Tu cuenta</b>
       <div id="who"></div>
-      <input id="uusr" placeholder="Usuario o correo">
+      <input id="uusr" placeholder="Correo (usa @uabc.edu.mx si eres de la Facultad)">
       <input id="ukey" type="password" placeholder="Clave">
       <button id="ureg">✨ Registrarme</button>
       <button id="ulin">🔑 Entrar</button>
@@ -963,7 +981,7 @@ PAGINA = """
         <option>Admisión</option><option>CEC</option><option>Escolar/Escolaridad</option><option>Egresados/Bolsa de trabajo</option><option>Eventos</option><option>Otro</option>
       </select>
       <span class="etiq">Cuéntanos qué faltó</span>
-      <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo la fecha exacta del examen de admisión…"></textarea>
+      <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo el costo de inscripción al curso de inglés…"></textarea>
       <div id="fbprev" class="fb-captura">📸 Se adjuntará una captura de pantalla automática del chat.</div>
       <button id="fbsend">📨 Enviar al responsable</button>
     </div>
@@ -973,9 +991,9 @@ PAGINA = """
       <button id="unlock">🔓 Entrar</button>
       <button id="salirp">🚪 Salir del panel</button>
       <div id="zona" style="display:none">
-        <span class="etiq">1️⃣ Categoría del aviso</span>
+        <span class="etiq">1️⃣ Categoría del aviso (usa "Clases" para info interna UABC)</span>
         <select id="fcat">
-          <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option>
+          <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option><option>CEC</option><option>Clases</option><option>Tareas</option><option>Internos</option>
         </select>
         <span class="etiq">2️⃣ Vigente hasta (opcional)</span>
         <input id="fvig" type="date">
@@ -983,7 +1001,7 @@ PAGINA = """
         <div id="drop">📥 Arrastra aquí tu documento o póster<br><small>o toca para elegirlo</small></div>
         <input id="ffile" type="file" style="display:none">
         <span class="etiq">📝 Texto del póster (plan B recomendado para imágenes)</span>
-        <div class="ayuda">Si subes una IMAGEN y el motor de visión está saturado, copia y pega aquí lo que dice el póster (evento, fecha, hora, lugar) y se publicará al instante sin esperar.</div>
+        <div class="ayuda">Si subes una IMAGEN y el motor de visión está saturado, copia y pega aquí lo que dice el póster (evento, fecha, hora, lugar, costos) y se publicará al instante sin esperar.</div>
         <textarea id="ftexto" rows="4" placeholder="Ejemplo: Plática para Potenciales a Egresar. Martes 18 de agosto, 12:00 y 16:00 hrs, Sala de Usos Múltiples. Informes: Mtra. Dulce Rodríguez, egresados__idiomas__mxl@uabc.edu.mx"></textarea>
         <button id="fsubir">📤 Subir y publicar</button>
         <button id="nota">🎤 Grabar nota de voz</button>
@@ -1008,6 +1026,7 @@ PAGINA = """
 <script>
 let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null, lastPregunta = "", lastRespuesta = "", capturaPendiente = "";
 let currentUser = localStorage.getItem('uabc_user') || "";
+let currentRol = localStorage.getItem('uabc_rol') || "externo";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const BIENVENIDAS = {
@@ -1021,9 +1040,9 @@ const TXT_BIENVENIDAS = {
   fr: 'Bonjour ! Je suis UABCBot Idiomas, l’assistant de la Faculté de Langues de l’UABC à Mexicali. Je t’aide en espagnol, anglais ou français : je te lis ou je t’écoute. Touche une option, ou écris ou dis ta question.'
 };
 const NOTAS = {
-  es: 'Personal docente: escribe o di "administración". Si una respuesta no te resuelve, toca 🚩.',
-  en: 'Faculty staff: type or say "administración". If an answer doesn’t help you, tap 🚩.',
-  fr: 'Personnel : écris ou dis « administración ». Si une réponse ne t’aide pas, touche 🚩.'
+  es: 'Personal docente: escribe o di "administración". Comunidad UABC: regístrate con tu correo @uabc.edu.mx para ver avisos de clases. Si una respuesta no te resuelve, toca 🚩.',
+  en: 'Faculty staff: type or say "administración". UABC community: register with your @uabc.edu.mx email to see class notices. If an answer doesn’t help you, tap 🚩.',
+  fr: 'Personnel : écris ou dis « administración ». Communauté UABC : inscris-toi avec ton courriel @uabc.edu.mx pour voir les avis de cours. Si une réponse ne t’aide pas, touche 🚩.'
 };
 const UI = {
   es: {sub: "Facultad de Idiomas de la UABC en Mexicali", side: "🗂️ Conversaciones", new: "➕ Nueva conversación", ph: "Escribe o dime tu pregunta…"},
@@ -1059,7 +1078,7 @@ async function welcome(){
   applyLang(L);
   let opts = [
     {q:"¿Cuántos créditos necesito para titularme en Traducción?", t:"💳 Créditos para titularme"},
-    {q:"¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t:"📅 Horarios del CEC"},
+    {q:"¿Cuánto cuesta inscribirme a las clases de inglés?", t:"💰 Costo de clases de inglés"},
     {q:"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t:"🎓 Requisitos de admisión"},
     {q:"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t:"🏛️ Carreras y TSU"}
   ];
@@ -1096,7 +1115,8 @@ function removeThink(){
   const t = document.getElementById('think'); if (t) t.remove();
 }
 function refreshWho(){
-  document.getElementById('who').innerText = currentUser ? '✅ Sesión: ' + currentUser + ' (tus conversaciones se guardan)' : '👋 Modo invitado: sin memoria de conversaciones.';
+  const rolTxt = currentRol === 'interno' ? ' · ✅ comunidad UABC (ve avisos de clases)' : ' · público general';
+  document.getElementById('who').innerText = currentUser ? '✅ Sesión: ' + currentUser + rolTxt : '👋 Modo invitado (público general): sin memoria ni avisos internos.';
 }
 function saveConv(){
   if (!currentUser) return;
@@ -1138,7 +1158,7 @@ async function send(msg){
   inp.value = '';
   lastPregunta = msg;
   thinking();
-  const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg, hist: hist.slice(-7), state, lang: langPref})});
+  const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({msg, hist: hist.slice(-7), state, lang: langPref, rol: currentRol})});
   const d = await r.json(); removeThink(); state = d.state;
   lastRespuesta = d.reply;
   if (langPref === 'auto' && d.lang) applyLang(d.lang);
@@ -1157,7 +1177,6 @@ document.getElementById('convs').onclick = () => { const d = document.getElement
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
 document.getElementById('fb').onclick = async () => {
   if (!lastRespuesta) { avisar('⚠️ Aún no hay respuestas que reportar.', 'error'); return; }
-  // 📸 Captura automática del chat
   try {
     const canvas = await html2canvas(chat, {backgroundColor: '#eef1f4', scale: 1, useCORS: true, logging: false});
     capturaPendiente = canvas.toDataURL('image/png');
@@ -1169,14 +1188,13 @@ document.getElementById('fb').onclick = async () => {
   const d = document.getElementById('fbdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block';
 };
 document.getElementById('fbsend').onclick = async () => {
-  avisar('⏳ Enviando reporte con captura...', 'warn');
-  const r = await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
+  avisar('⏳ Enviando reporte con captura...');
+  await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
     pregunta: lastPregunta, respuesta: lastRespuesta,
     comentario: document.getElementById('fbcom').value,
     area: document.getElementById('fbarea').value,
     captura: capturaPendiente
   })});
-  const d = await r.json();
   document.getElementById('fbcom').value = '';
   document.getElementById('fbdrawer').style.display = 'none';
   capturaPendiente = "";
@@ -1185,19 +1203,21 @@ document.getElementById('fbsend').onclick = async () => {
 document.getElementById('ureg').onclick = async () => {
   const d = await (await fetch('/api/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
   if (!d.ok) { avisar(d.error, 'error'); return; }
-  currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
+  currentUser = d.usuario; currentRol = d.rol || 'externo';
+  localStorage.setItem('uabc_user', currentUser); localStorage.setItem('uabc_rol', currentRol);
   refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
-  avisar('✅ Bienvenido, ' + currentUser + '. Tus conversaciones se guardarán.', 'ok');
+  avisar(currentRol === 'interno' ? '✅ Bienvenido, ' + currentUser + '. Verás avisos internos de clases.' : '✅ Bienvenido, ' + currentUser + '.', 'ok');
 };
 document.getElementById('ulin').onclick = async () => {
   const d = await (await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
   if (!d.ok) { avisar(d.error, 'error'); return; }
-  currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
+  currentUser = d.usuario; currentRol = d.rol || 'externo';
+  localStorage.setItem('uabc_user', currentUser); localStorage.setItem('uabc_rol', currentRol);
   refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
-  avisar('✅ Sesión iniciada: ' + currentUser, 'ok');
+  avisar('✅ Sesión iniciada: ' + currentUser + (currentRol === 'interno' ? ' (comunidad UABC)' : ''), 'ok');
 };
-document.getElementById('uguest').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
-document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
+document.getElementById('uguest').onclick = () => { currentUser = ""; currentRol = "externo"; localStorage.removeItem('uabc_user'); localStorage.removeItem('uabc_rol'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
+document.getElementById('uout').onclick = () => { currentUser = ""; currentRol = "externo"; localStorage.removeItem('uabc_user'); localStorage.removeItem('uabc_rol'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
   document.getElementById(id).onclick = e => {
     langPref = v;
@@ -1232,6 +1252,7 @@ mic.onclick = async () => {
     fd.append('hist', JSON.stringify(hist.slice(-7)));
     fd.append('state', JSON.stringify(state));
     fd.append('lang', langPref);
+    fd.append('rol', currentRol);
     const d = await (await fetch('/api/voice', {method:'POST', body: fd})).json();
     removeThink(); state = d.state;
     if (langPref === 'auto' && d.lang) applyLang(d.lang);
