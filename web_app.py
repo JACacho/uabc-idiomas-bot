@@ -382,7 +382,6 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    # 💰 Motor de PAGO primero (DeepSeek V4 Flash, el #1 en Academia y baratísimo)
     texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["deepseek/deepseek-v4-flash", "deepseek/deepseek-chat-v3.1", "meta-llama/llama-3.3-70b-instruct:free"])
     if not _es_valida(texto):
         texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
@@ -889,19 +888,20 @@ PAGINA = """
   #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; }
   #side button:hover { background: rgba(255,255,255,.25); }
   main { flex: 1; display: flex; flex-direction: column; height: 100vh; }
-  header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 10px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); flex-wrap: wrap; }
   header img { width: 54px; height: 54px; background: #fff; border-radius: 12px; padding: 3px; }
   header h1 { font-size: 17px; } header p { font-size: 12px; opacity: .85; }
-  .langs { display: flex; gap: 5px; margin-left: 14px; }
+  .langs { display: flex; gap: 5px; margin-left: 10px; }
   .langs button { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: transparent; color: #fff; cursor: pointer; }
   .langs button.on { background: #f7941d; border-color: #f7941d; font-weight: 700; }
   .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; }
+  #user { background: #8fe3b0; }
   #nuevo { margin-left: auto; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
   .msg.user { align-self: flex-end; align-items: flex-end; }
   .msg.bot { align-self: flex-start; align-items: flex-start; }
-  .bub { padding: 10px 14px; border-radius: 16px; font-size: 14.5px; line-height: 1.45; box-shadow: 0 1px 2px rgba(0,0,0,.12); white-space: pre-wrap; }
+  .bub { padding: 10px 14px; border-radius: 16px; font-size: calc(14.5px * var(--fs, 1)); line-height: 1.45; box-shadow: 0 1px 2px rgba(0,0,0,.12); white-space: pre-wrap; }
   .user .bub { background: #d9f6c8; border-bottom-right-radius: 4px; }
   .bot .bub { background: #fff; border-bottom-left-radius: 4px; }
   .msg audio { width: 260px; max-width: 100%; }
@@ -909,14 +909,14 @@ PAGINA = """
   .dots::after { content: ''; animation: pts 1.2s steps(4) infinite; }
   @keyframes pts { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
   .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .opts button { font-size: 12.5px; padding: 7px 11px; border-radius: 999px; border: 1px solid #00855f; background: #f2fbf6; color: #00684a; cursor: pointer; }
+  .opts button { font-size: calc(12.5px * var(--fs, 1)); padding: 7px 11px; border-radius: 999px; border: 1px solid #00855f; background: #f2fbf6; color: #00684a; cursor: pointer; }
   .opts button:hover { background: #00855f; color: #fff; }
-  .nota { display: block; margin-top: 9px; font-size: 12px; color: #888; }
+  .nota { display: block; margin-top: 9px; font-size: calc(12px * var(--fs, 1)); color: #888; }
   .bar { display: flex; gap: 8px; padding: 10px 12px 14px; align-items: center; }
   #mic { width: 46px; height: 46px; border-radius: 50%; border: none; background: #00684a; color: #fff; font-size: 19px; cursor: pointer; flex-shrink: 0; }
   #mic.rec { background: #d32f2f; animation: pulso 1s infinite; }
   @keyframes pulso { 50% { transform: scale(1.12); } }
-  #inp { flex: 1; border: 1px solid #cfd8dc; border-radius: 999px; padding: 12px 18px; font-size: 15px; outline: none; }
+  #inp { flex: 1; border: 1px solid #cfd8dc; border-radius: 999px; padding: 12px 18px; font-size: calc(15px * var(--fs, 1)); outline: none; }
   #inp:focus { border-color: #00855f; }
   #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: #f7941d; color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; }
   #fb { width: 46px; height: 46px; border-radius: 50%; border: none; background: #d32f2f; color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; }
@@ -934,10 +934,10 @@ PAGINA = """
   .fb-captura { margin-top: 8px; border: 1px solid #cfd8dc; border-radius: 8px; padding: 8px; text-align: center; background: #f7f9fa; font-size: 11.5px; color: #556; }
   @media (max-width: 900px) { #side { display: none; } #convs { display: block; } }
   @media (min-width: 900px) {
-    .bub { font-size: 16.5px; }
+    .bub { font-size: calc(16.5px * var(--fs, 1)); }
     header h1 { font-size: 21px; }
     header p { font-size: 13px; }
-    #inp { font-size: 17px; padding: 14px 22px; }
+    #inp { font-size: calc(17px * var(--fs, 1)); padding: 14px 22px; }
     .msg { max-width: 70%; }
   }
 </style>
@@ -956,6 +956,9 @@ PAGINA = """
       <div><h1>UABCBot Idiomas</h1><p id="hsub">Facultad de Idiomas de la UABC en Mexicali</p></div>
       <div class="langs">
         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
+      </div>
+      <div class="langs" style="margin-left:4px">
+        <button id="fmenos" title="Letra más pequeña">A−</button><button id="fmas" title="Letra más grande">A+</button><button id="full" title="Pantalla completa">⛶</button>
       </div>
       <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
       <button id="user" class="hbtn" title="Tu cuenta">👤</button>
@@ -1024,7 +1027,7 @@ PAGINA = """
   </main>
 </div>
 <script>
-let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null, lastPregunta = "", lastRespuesta = "", capturaPendiente = "";
+let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null, lastPregunta = "", lastRespuesta = "", capturaPendiente = "", fontScale = 1;
 let currentUser = localStorage.getItem('uabc_user') || "";
 let currentRol = localStorage.getItem('uabc_rol') || "externo";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
@@ -1044,13 +1047,25 @@ const NOTAS = {
   en: 'Faculty staff: type or say "administración". UABC community: register with your @uabc.edu.mx email to see class notices. If an answer doesn’t help you, tap 🚩.',
   fr: 'Personnel : écris ou dis « administración ». Communauté UABC : inscris-toi avec ton courriel @uabc.edu.mx pour voir les avis de cours. Si une réponse ne t’aide pas, touche 🚩.'
 };
+const GUEST_MSG = {
+  es: '👋 Invitado: sin memoria. Regístrate con 👤 para guardar tus conversaciones.',
+  en: '👋 Guest: no memory. Register with 👤 to save your conversations.',
+  fr: '👋 Invité : pas de mémoire. Inscris-toi avec 👤 pour garder tes conversations.'
+};
 const UI = {
   es: {sub: "Facultad de Idiomas de la UABC en Mexicali", side: "🗂️ Conversaciones", new: "➕ Nueva conversación", ph: "Escribe o dime tu pregunta…"},
   en: {sub: "Faculty of Languages of UABC in Mexicali", side: "🗂️ Conversations", new: "➕ New conversation", ph: "Type or say your question…"},
   fr: {sub: "Faculté de Langues de l’UABC à Mexicali", side: "🗂️ Conversations", new: "➕ Nouvelle conversation", ph: "Écris ou dis ta question…"}
 };
+const OPTS_BASE = {
+  "¿Cuántos créditos necesito para titularme en Traducción?": {es:"💳 Créditos para titularme", en:"💳 Credits to graduate", fr:"💳 Crédits pour diplômer"},
+  "¿Cuánto cuesta inscribirme a las clases de inglés?": {es:"💰 Costo de clases de inglés", en:"💰 English class cost", fr:"💰 Coût des cours d'anglais"},
+  "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?": {es:"🎓 Requisitos de admisión", en:"🎓 Admission requirements", fr:"🎓 Conditions d'admission"},
+  "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?": {es:"🏛️ Carreras y TSU", en:"🏛️ Degrees & TSU", fr:"🏛️ Licences & TSU"}
+};
 function uid(){ return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function langUI(){ return (langPref in BIENVENIDAS) ? langPref : 'es'; }
+function applyFont(){ document.documentElement.style.setProperty('--fs', fontScale); }
 function applyLang(L){
   const u = UI[L] || UI.es;
   document.getElementById('hsub').innerText = u.sub;
@@ -1076,15 +1091,12 @@ function bubble(role, text, audio){
 async function welcome(){
   const L = langUI();
   applyLang(L);
-  let opts = [
-    {q:"¿Cuántos créditos necesito para titularme en Traducción?", t:"💳 Créditos para titularme"},
-    {q:"¿Cuánto cuesta inscribirme a las clases de inglés?", t:"💰 Costo de clases de inglés"},
-    {q:"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t:"🎓 Requisitos de admisión"},
-    {q:"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t:"🏛️ Carreras y TSU"}
-  ];
+  let opts = Object.keys(OPTS_BASE).map(q => ({q, t: OPTS_BASE[q][L]}));
   try {
     const d = await (await fetch('/api/topfaq')).json();
-    if (d && d.length) opts = d.map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+    if (d && d.length) {
+      opts = d.map(x => ({q: x.q, t: OPTS_BASE[x.q] ? OPTS_BASE[x.q][L] : "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+    }
   } catch(e) {}
   const d = document.createElement('div'); d.className = 'msg bot';
   d.innerHTML = '<div class="bub">' + BIENVENIDAS[L] + '<div class="opts">'
@@ -1125,7 +1137,7 @@ function saveConv(){
 }
 async function loadList(){
   if (!currentUser) {
-    const msg = '<small>👋 Invitado: sin memoria. Regístrate con 👤 para guardar tus conversaciones.</small>';
+    const msg = '<small>' + (GUEST_MSG[langUI()] || GUEST_MSG.es) + '</small>';
     document.getElementById('lista').innerHTML = msg;
     document.getElementById('lista2').innerHTML = msg;
     return;
@@ -1175,6 +1187,12 @@ document.getElementById('nuevo').onclick = nueva;
 document.getElementById('sidenew').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
+document.getElementById('fmas').onclick = () => { fontScale = Math.min(1.6, fontScale + 0.1); applyFont(); avisar('🔍 Letra más grande (' + Math.round(fontScale*100) + '%).'); };
+document.getElementById('fmenos').onclick = () => { fontScale = Math.max(0.8, fontScale - 0.1); applyFont(); avisar('🔍 Letra más pequeña (' + Math.round(fontScale*100) + '%).'); };
+document.getElementById('full').onclick = () => {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+};
 document.getElementById('fb').onclick = async () => {
   if (!lastRespuesta) { avisar('⚠️ Aún no hay respuestas que reportar.', 'error'); return; }
   try {
@@ -1224,6 +1242,7 @@ document.getElementById('uout').onclick = () => { currentUser = ""; currentRol =
     document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on'));
     e.target.classList.add('on');
     applyLang(langUI());
+    loadList();
     if (!hist.length) { chat.innerHTML = ''; welcome(); }
     else avisar(v === 'auto' ? ' AUTO: español por defecto; si te leo o escucho en otro idioma, todo cambia a ese idioma.' : '🌐 Interfaz y respuestas en ' + v.toUpperCase());
   };
@@ -1327,7 +1346,7 @@ document.getElementById('rep').onclick = async () => {
     + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
   avisar('📊 Reporte listo en el panel.', 'ok');
 };
-welcome(); loadList(); refreshWho(); inp.focus();
+applyFont(); welcome(); loadList(); refreshWho(); inp.focus();
 </script>
 </body>
 </html>
