@@ -882,7 +882,7 @@ PAGINA = """
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
   #toast { display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); color: #fff; padding: 13px 22px; border-radius: 14px; font-size: 14.5px; z-index: 99; box-shadow: 0 4px 16px rgba(0,0,0,.35); max-width: 92%; text-align: center; }
-  .wrap { max-width: 1200px; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
+  .wrap { max-width: 100%; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
   #side { width: 260px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
   #side b { font-size: 14px; }
   #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; }
@@ -1094,9 +1094,9 @@ async function welcome(){
   let opts = Object.keys(OPTS_BASE).map(q => ({q, t: OPTS_BASE[q][L]}));
   try {
     const d = await (await fetch('/api/topfaq')).json();
-    if (d && d.length) {
-      opts = d.map(x => ({q: x.q, t: OPTS_BASE[x.q] ? OPTS_BASE[x.q][L] : "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
-    }
+    const extras = (d || []).filter(x => !OPTS_BASE[x.q]).slice(0, 2)
+      .map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+    opts = opts.concat(extras);
   } catch(e) {}
   const d = document.createElement('div'); d.className = 'msg bot';
   d.innerHTML = '<div class="bub">' + BIENVENIDAS[L] + '<div class="opts">'
