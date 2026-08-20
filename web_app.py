@@ -29,6 +29,7 @@ FEEDBACK = os.path.join(BASE, "feedback")
 CACHE = os.path.join(BASE, "cache.json")
 USO = os.path.join(BASE, "uso.jsonl")
 USERS = os.path.join(BASE, "users.json")
+TOPFAQ_CACHE = os.path.join(BASE, "topfaq_cache.json")
 CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "fimxl2026")
 GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO = os.environ.get("GITHUB_REPO", "")
@@ -38,6 +39,7 @@ GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+TOPFAQ_HOURS = float(os.environ.get("TOPFAQ_HOURS", "8"))
 LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
 for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK, CAPTURAS):
@@ -455,8 +457,9 @@ app = FastAPI()
 
 FAQ = [
     (["credito", "titular", "titul"], "¿Cuántos créditos necesito para titularme en Traducción?"),
+    (["costo", "cuesta", "precio", "inscri"], "¿Cuánto cuesta inscribirme a las clases de inglés?"),
     (["horario", "cec"], "¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?"),
-    (["admision", "requisito", "inscri"], "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"),
+    (["admision", "requisito"], "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"),
     (["carrera", "tsu", "tecnico", "técnico"], "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"),
 ]
 
@@ -672,8 +675,22 @@ async def report(req: Request):
 
 @app.get("/api/topfaq")
 async def topfaq():
-    c = Counter(normalizar_faq(l["texto"]) for l in leer_uso() if l.get("texto"))
-    return [{"q": q, "n": n} for q, n in c.most_common(4)]
+    now = time.time()
+    try:
+        with open(TOPFAQ_CACHE, encoding="utf-8") as f:
+            c = json.load(f)
+        if now - c.get("ts", 0) < TOPFAQ_HOURS * 3600:
+            return c["items"]
+    except Exception:
+        pass
+    cnt = Counter(normalizar_faq(l["texto"]) for l in leer_uso() if l.get("texto"))
+    items = [{"q": q, "n": n} for q, n in cnt.most_common(8)]
+    try:
+        with open(TOPFAQ_CACHE, "w", encoding="utf-8") as f:
+            json.dump({"ts": now, "items": items}, f, ensure_ascii=False)
+    except Exception:
+        pass
+    return items
 
 @app.get("/api/tts")
 async def api_tts(texto: str = "", lang: str = "es"):
@@ -962,12 +979,13 @@ PAGINA = """
       </div>
       <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
       <button id="user" class="hbtn" title="Tu cuenta">👤</button>
+      <button id="logout" class="hbtn" title="Cerrar sesión">🚪</button>
       <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
     </header>
     <button id="gear" title="Personal autorizado">⚙️</button>
-    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b id="sidet2">🗂️ Conversaciones</b><div id="lista2"></div></div>
     <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
-      <b>👤 Tu cuenta</b>
+      <b id="utitle">👤 Tu cuenta</b>
       <div id="who"></div>
       <input id="uusr" placeholder="Correo (usa @uabc.edu.mx si eres de la Facultad)">
       <input id="ukey" type="password" placeholder="Clave">
@@ -978,12 +996,12 @@ PAGINA = """
     </div>
     <div id="chat"></div>
     <div id="fbdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
-      <b>🚩 Reportar respuesta no resuelta</b>
-      <span class="etiq">Área responsable</span>
+      <b id="fbtitle">🚩 Reportar respuesta no resuelta</b>
+      <span class="etiq" id="fbarea_l">Área responsable</span>
       <select id="fbarea">
         <option>Admisión</option><option>CEC</option><option>Escolar/Escolaridad</option><option>Egresados/Bolsa de trabajo</option><option>Eventos</option><option>Otro</option>
       </select>
-      <span class="etiq">Cuéntanos qué faltó</span>
+      <span class="etiq" id="fbcom_l">Cuéntanos qué faltó</span>
       <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo el costo de inscripción al curso de inglés…"></textarea>
       <div id="fbprev" class="fb-captura">📸 Se adjuntará una captura de pantalla automática del chat.</div>
       <button id="fbsend">📨 Enviar al responsable</button>
@@ -1053,9 +1071,14 @@ const GUEST_MSG = {
   fr: '👋 Invité : pas de mémoire. Inscris-toi avec 👤 pour garder tes conversations.'
 };
 const UI = {
-  es: {sub: "Facultad de Idiomas de la UABC en Mexicali", side: "🗂️ Conversaciones", new: "➕ Nueva conversación", ph: "Escribe o dime tu pregunta…"},
-  en: {sub: "Faculty of Languages of UABC in Mexicali", side: "🗂️ Conversations", new: "➕ New conversation", ph: "Type or say your question…"},
-  fr: {sub: "Faculté de Langues de l’UABC à Mexicali", side: "🗂️ Conversations", new: "➕ Nouvelle conversation", ph: "Écris ou dis ta question…"}
+  es: {sub: "Facultad de Idiomas de la UABC en Mexicali", side: "🗂️ Conversaciones", new: "➕ Nueva conversación", ph: "Escribe o dime tu pregunta…", utitle: "👤 Tu cuenta", reg: "✨ Registrarme", login: "🔑 Entrar", guest: "👋 Seguir como invitado", out: "🚪 Cerrar sesión", correo: "Correo (usa @uabc.edu.mx si eres de la Facultad)", clave: "Clave", fbtitle: "🚩 Reportar respuesta no resuelta", fbarea: "Área responsable", fbcom: "Cuéntanos qué faltó"},
+  en: {sub: "Faculty of Languages of UABC in Mexicali", side: "🗂️ Conversations", new: "➕ New conversation", ph: "Type or say your question…", utitle: "👤 Your account", reg: "✨ Register", login: "🔑 Sign in", guest: "👋 Continue as guest", out: "🚪 Sign out", correo: "Email (use @uabc.edu.mx if you are UABC)", clave: "Password", fbtitle: "🚩 Report an unresolved answer", fbarea: "Responsible area", fbcom: "Tell us what was missing"},
+  fr: {sub: "Faculté de Langues de l’UABC à Mexicali", side: "🗂️ Conversations", new: "➕ Nouvelle conversation", ph: "Écris ou dis ta question…", utitle: "👤 Ton compte", reg: "✨ M’inscrire", login: "🔑 Entrer", guest: "👋 Continuer en invité", out: "🚪 Sortir", correo: "Courriel (utilise @uabc.edu.mx si eres de la Facultad)", clave: "Mot de passe", fbtitle: "🚩 Signaler une réponse non résolue", fbarea: "Zone responsable", fbcom: "Dis-nous ce qui a manqué"}
+};
+const WHO = {
+  es: {interno: ' · ✅ comunidad UABC (ve avisos de clases)', externo: ' · público general', guest: '👋 Modo invitado (público general): sin memoria ni avisos internos.'},
+  en: {interno: ' · ✅ UABC community (sees class notices)', externo: ' · general public', guest: '👋 Guest mode (general public): no memory, no internal notices.'},
+  fr: {interno: ' · ✅ communauté UABC (voit les avis de cours)', externo: ' · public général', guest: '👋 Mode invité (public général) : pas de mémoire ni avis internes.'}
 };
 const OPTS_BASE = {
   "¿Cuántos créditos necesito para titularme en Traducción?": {es:"💳 Créditos para titularme", en:"💳 Credits to graduate", fr:"💳 Crédits pour diplômer"},
@@ -1070,8 +1093,19 @@ function applyLang(L){
   const u = UI[L] || UI.es;
   document.getElementById('hsub').innerText = u.sub;
   document.getElementById('sidet').innerText = u.side;
+  document.getElementById('sidet2').innerText = u.side;
   document.getElementById('sidenew').innerText = u.new;
   document.getElementById('inp').placeholder = u.ph;
+  document.getElementById('utitle').innerText = u.utitle;
+  document.getElementById('ureg').innerText = u.reg;
+  document.getElementById('ulin').innerText = u.login;
+  document.getElementById('uguest').innerText = u.guest;
+  document.getElementById('uout').innerText = u.out;
+  document.getElementById('uusr').placeholder = u.correo;
+  document.getElementById('ukey').placeholder = u.clave;
+  document.getElementById('fbtitle').innerText = u.fbtitle;
+  document.getElementById('fbarea_l').innerText = u.fbarea;
+  document.getElementById('fbcom_l').innerText = u.fbcom;
 }
 function avisar(msg, tipo){
   const t = document.getElementById('toast');
@@ -1094,9 +1128,9 @@ async function welcome(){
   let opts = Object.keys(OPTS_BASE).map(q => ({q, t: OPTS_BASE[q][L]}));
   try {
     const d = await (await fetch('/api/topfaq')).json();
-    const extras = (d || []).filter(x => !OPTS_BASE[x.q]).slice(0, 2)
+    const extras = (d || []).filter(x => !OPTS_BASE[x.q])
       .map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
-    opts = opts.concat(extras);
+    opts = opts.concat(extras.slice(0, 4));
   } catch(e) {}
   const d = document.createElement('div'); d.className = 'msg bot';
   d.innerHTML = '<div class="bub">' + BIENVENIDAS[L] + '<div class="opts">'
@@ -1127,8 +1161,15 @@ function removeThink(){
   const t = document.getElementById('think'); if (t) t.remove();
 }
 function refreshWho(){
-  const rolTxt = currentRol === 'interno' ? ' · ✅ comunidad UABC (ve avisos de clases)' : ' · público general';
-  document.getElementById('who').innerText = currentUser ? '✅ Sesión: ' + currentUser + rolTxt : '👋 Modo invitado (público general): sin memoria ni avisos internos.';
+  const L = langUI(); const w = WHO[L] || WHO.es;
+  document.getElementById('who').innerText = currentUser ? '✅ ' + currentUser + (currentRol === 'interno' ? w.interno : w.externo) : w.guest;
+}
+function doLogout(){
+  currentUser = ""; currentRol = "externo";
+  localStorage.removeItem('uabc_user'); localStorage.removeItem('uabc_rol');
+  refreshWho(); loadList();
+  document.getElementById('udrawer').style.display = 'none';
+  avisar(langUI()==='es' ? '👋 Sesión cerrada.' : (langUI()==='en' ? '👋 Signed out.' : '👋 Session fermée.'));
 }
 function saveConv(){
   if (!currentUser) return;
@@ -1187,8 +1228,9 @@ document.getElementById('nuevo').onclick = nueva;
 document.getElementById('sidenew').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
-document.getElementById('fmas').onclick = () => { fontScale = Math.min(1.6, fontScale + 0.1); applyFont(); avisar('🔍 Letra más grande (' + Math.round(fontScale*100) + '%).'); };
-document.getElementById('fmenos').onclick = () => { fontScale = Math.max(0.8, fontScale - 0.1); applyFont(); avisar('🔍 Letra más pequeña (' + Math.round(fontScale*100) + '%).'); };
+document.getElementById('logout').onclick = doLogout;
+document.getElementById('fmas').onclick = () => { fontScale = Math.min(1.6, fontScale + 0.1); applyFont(); avisar('🔍 ' + Math.round(fontScale*100) + '%'); };
+document.getElementById('fmenos').onclick = () => { fontScale = Math.max(0.8, fontScale - 0.1); applyFont(); avisar('🔍 ' + Math.round(fontScale*100) + '%'); };
 document.getElementById('full').onclick = () => {
   if (!document.fullscreenElement) document.documentElement.requestFullscreen();
   else document.exitFullscreen();
@@ -1216,7 +1258,7 @@ document.getElementById('fbsend').onclick = async () => {
   document.getElementById('fbcom').value = '';
   document.getElementById('fbdrawer').style.display = 'none';
   capturaPendiente = "";
-  avisar('📨 Reporte y captura enviados al responsable. ¡Gracias por ayudar a mejorar el bot!', 'ok');
+  avisar('📨 Reporte y captura enviados al responsable. ¡Gracias!', 'ok');
 };
 document.getElementById('ureg').onclick = async () => {
   const d = await (await fetch('/api/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
@@ -1232,26 +1274,25 @@ document.getElementById('ulin').onclick = async () => {
   currentUser = d.usuario; currentRol = d.rol || 'externo';
   localStorage.setItem('uabc_user', currentUser); localStorage.setItem('uabc_rol', currentRol);
   refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
-  avisar('✅ Sesión iniciada: ' + currentUser + (currentRol === 'interno' ? ' (comunidad UABC)' : ''), 'ok');
+  avisar('✅ ' + currentUser + (currentRol === 'interno' ? ' (comunidad UABC)' : ''), 'ok');
 };
-document.getElementById('uguest').onclick = () => { currentUser = ""; currentRol = "externo"; localStorage.removeItem('uabc_user'); localStorage.removeItem('uabc_rol'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
-document.getElementById('uout').onclick = () => { currentUser = ""; currentRol = "externo"; localStorage.removeItem('uabc_user'); localStorage.removeItem('uabc_rol'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
+document.getElementById('uguest').onclick = doLogout;
+document.getElementById('uout').onclick = doLogout;
 [['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
   document.getElementById(id).onclick = e => {
     langPref = v;
     document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on'));
     e.target.classList.add('on');
-    applyLang(langUI());
-    loadList();
+    applyLang(langUI()); refreshWho(); loadList();
     if (!hist.length) { chat.innerHTML = ''; welcome(); }
-    else avisar(v === 'auto' ? ' AUTO: español por defecto; si te leo o escucho en otro idioma, todo cambia a ese idioma.' : '🌐 Interfaz y respuestas en ' + v.toUpperCase());
+    else avisar(v === 'auto' ? ' AUTO: español por defecto; si te leo o escucho en otro idioma, todo cambia a ese idioma.' : '🌐 ' + v.toUpperCase());
   };
 });
 const drop = document.getElementById('drop');
 function marcarArchivo(f){
   droppedFile = f;
   drop.innerHTML = '📎 ' + esc(f.name);
-  avisar('📎 Archivo listo: ' + f.name + ' → pulsa "📤 Subir y publicar".');
+  avisar('📎 ' + f.name + ' → pulsa "📤 Subir y publicar".');
 }
 drop.onclick = () => document.getElementById('ffile').click();
 drop.ondragover = e => e.preventDefault();
@@ -1280,7 +1321,7 @@ mic.onclick = async () => {
     saveConv();
   };
   rec.start(); mic.classList.add('rec');
-  avisar('🎤 Grabando tu pregunta… toca el micrófono para terminar. Te escucho en español, inglés o francés.');
+  avisar('🎤 Grabando… toca el micrófono para terminar.');
 };
 document.getElementById('gear').onclick = () => { const d = document.getElementById('drawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; };
 document.getElementById('salirp').onclick = () => { state = {pending:false, active:false}; document.getElementById('drawer').style.display = 'none'; document.getElementById('zona').style.display = 'none'; };
@@ -1295,8 +1336,8 @@ document.getElementById('unlock').onclick = async () => {
 };
 document.getElementById('fsubir').onclick = async () => {
   const f = document.getElementById('ffile').files[0] || droppedFile;
-  if (!f && !document.getElementById('ftexto').value.trim()) { avisar('⚠️ Elige un archivo o pega el texto del aviso en el cuadro 📝.', 'error'); return; }
-  avisar('⏳ Procesando y publicando… puede tardar unos segundos.');
+  if (!f && !document.getElementById('ftexto').value.trim()) { avisar('⚠️ Elige un archivo o pega el texto en 📝.', 'error'); return; }
+  avisar('⏳ Procesando y publicando…');
   const fd = new FormData();
   if (f) fd.append('archivo', f);
   fd.append('categoria', document.getElementById('fcat').value);
@@ -1327,7 +1368,7 @@ document.getElementById('nota').onclick = async () => {
   rec2.ondataavailable = e => ch.push(e.data);
   rec2.onstop = async () => {
     stream.getTracks().forEach(t => t.stop());
-    avisar('⏳ Transcribiendo y publicando tu nota…');
+    avisar('⏳ Transcribiendo y publicando…');
     const fd = new FormData();
     fd.append('audio', new Blob(ch, {type:'audio/webm'}), 'nota.webm');
     fd.append('categoria', document.getElementById('fcat').value);
@@ -1337,14 +1378,14 @@ document.getElementById('nota').onclick = async () => {
     loadDocs();
   };
   rec2.start();
-  avisar('🔴 Grabando nota… toca de nuevo para terminar y publicar.');
+  avisar('🔴 Grabando nota… toca de nuevo para terminar.');
 };
 document.getElementById('rep').onclick = async () => {
   const d = await (await fetch('/api/report', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})})).json();
   if (d.error) { avisar(d.error, 'error'); return; }
   document.getElementById('fest').innerText = '📊 Total: ' + d.total + ' · Hoy: ' + d.hoy + ' · Idiomas: ' + JSON.stringify(d.idiomas)
     + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
-  avisar('📊 Reporte listo en el panel.', 'ok');
+  avisar('📊 Reporte listo.', 'ok');
 };
 applyFont(); welcome(); loadList(); refreshWho(); inp.focus();
 </script>
