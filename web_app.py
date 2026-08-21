@@ -453,7 +453,11 @@ async def generar_voz(texto, lang):
         return None
 
 # ================= SERVICIOS =================
+VERSION = "v19-2026-08-21"
 app = FastAPI()
+
+@app.get("/api/version")
+async def api_version(): return {"version": VERSION}
 
 FAQ = [
     (["credito", "titular", "titul"], "¿Cuántos créditos necesito para titularme en Traducción?"),
@@ -532,6 +536,8 @@ def leer_uso():
         return []
 
 def guardar_aviso(texto, categoria="Avisos"):
+    try: os.remove(CACHE)
+    except Exception: pass
     nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + categoria + ".txt"
     cab = f"=== {categoria} | Subido: {datetime.now().strftime('%d/%m/%Y')} | Vigente hasta: sin límite ===\n"
     contenido = cab + texto
