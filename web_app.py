@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from bs4 import BeautifulSoup
 import uvicorn
 
-VERSION = "v21-2026-08-22"
+VERSION = "v21.1-2026-08-22"
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
 CARPETA = os.path.join(BASE, "datos_bot")
@@ -226,7 +226,7 @@ def _guardar_cache(c):
     except Exception: pass
 def _es_cacheable(t):
     low=(t or "").lower()
-    return not (t.startswith("⚠️") or t.startswith("📅") or t.startswith("Según la información oficial") or t.startswith("Sobre ") or len(t)<60 or "ayudarte hoy" in low or "no está en el contexto" in low or "===" in t or "documento " in low or len(t)>900)
+    return not (t.startswith("️") or t.startswith("📅") or t.startswith("Según la información oficial") or t.startswith("Sobre ") or len(t)<60 or "ayudarte hoy" in low or "no está en el contexto" in low or "===" in t or "documento " in low or len(t)>900)
 def _hash(c,s): return hashlib.sha256((s+c).encode()).hexdigest()
 
 def responder(pregunta, historial, lang_pref="auto", rol="externo"):
@@ -252,7 +252,7 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     if not _es_valida(texto):
         fb=respuesta_de_documentos(pregunta,rol)
         if fb: return fb,lang
-    if not _es_valida(texto): texto="️ Motores saturados. Intenta en unos segundos."
+    if not _es_valida(texto): texto="⚠️ Motores saturados. Intenta en unos segundos."
     texto=re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+","",texto).strip()
     if _es_cacheable(texto): cache[clave]=[texto,lang]; _guardar_cache(cache)
     return texto,lang
@@ -337,7 +337,7 @@ def router(msg,hist,state,lang_pref,rol="externo"):
     if state.get("pending"):
         state["pending"]=False
         if texto==CLAVE_ADMIN: state["active"]=True; return "✅ Acceso concedido. SALIR para cerrar.",None,state
-        return "❌ Clave incorrecta.",None,state
+        return " Clave incorrecta.",None,state
     if state.get("active"):
         if texto.upper()=="SALIR": state["active"]=False; return "🔒 Cerrado.",None,state
         n,r=guardar_aviso(texto); return f"✅ Publicado. {r}",None,state
@@ -733,7 +733,7 @@ header img{width:54px;height:54px;background:#fff;border-radius:12px;padding:3px
 <header>
 <img src="/logo.png" alt="logo"><div><h1>UABCBot Idiomas</h1><p id="hsub">Facultad de Idiomas de la UABC en Mexicali</p></div>
 <div class="langs"><button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button></div>
-<div class="langs" style="margin-left:4px"><button id="fmenos">A−</button><button id="fmas">A+</button><button id="full"></button></div>
+<div class="langs" style="margin-left:4px"><button id="fmenos">A−</button><button id="fmas">A+</button><button id="full">⛶</button></div>
 <button id="convs" class="hbtn">🗂️</button><button id="user" class="hbtn">👤</button><button id="logout" class="hbtn">🚪</button><button id="nuevo" class="hbtn"></button>
 </header>
 <button id="gear">⚙️</button>
@@ -746,8 +746,8 @@ header img{width:54px;height:54px;background:#fff;border-radius:12px;padding:3px
 <span class="etiq" id="fbarea_l">Área responsable</span><select id="fbarea"><option>Admisión</option><option>CEC</option><option>Escolar/Escolaridad</option><option>Egresados/Bolsa de trabajo</option><option>Eventos</option><option>Otro</option></select>
 <span class="etiq" id="fbcom_l">Cuéntanos qué faltó</span><textarea id="fbcom" rows="3"></textarea><div id="fbprev" class="fb-captura">📸 Captura automática adjunta.</div>
 <button id="fbsend">📨 Enviar al responsable</button></div>
-<div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖</button><b>️ Panel de personal</b>
-<input id="clave" type="password" placeholder="Clave (Enter)"><button id="unlock">🔓 Entrar</button><button id="salirp">🚪 Salir</button>
+<div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖</button><b>🛠️ Panel de personal</b>
+<input id="clave" type="password" placeholder="Clave (Enter)"><button id="unlock">🔓 Entrar</button><button id="salirp"> Salir</button>
 <div id="zona" style="display:none">
 <span class="etiq">📇 Catálogo: agregar responsable por tema</span>
 <input id="ctema" placeholder="Tema (ej. Doctorados)"><input id="ckw" placeholder="Palabras clave, separadas por coma (doctorado, posgrado)"><input id="cnom" placeholder="Nombre del responsable"><input id="crol" placeholder="Rol"><input id="ccor" placeholder="Correo"><input id="ctel" placeholder="Teléfono"><input id="cof" placeholder="Oficina"><input id="chor" placeholder="Horario de atención">
@@ -760,23 +760,23 @@ header img{width:54px;height:54px;background:#fff;border-radius:12px;padding:3px
 <span class="etiq">2️⃣ Vigente hasta</span><input id="fvig" type="date">
 <span class="etiq">3️⃣ Archivo</span><div id="drop">📥 Arrastra o toca</div><input id="ffile" type="file" style="display:none">
 <span class="etiq"> Texto (plan B)</span><textarea id="ftexto" rows="4"></textarea>
-<button id="fsubir">📤 Subir y publicar</button><button id="nota">🎤 Nota de voz</button><button id="ldocs">🔄 Documentos</button><button id="lfb">📨 Feedbacks</button><button id="rep">📊 Reporte</button><button id="scraper">🕷️ Actualizar desde web</button>
+<button id="fsubir">📤 Subir y publicar</button><button id="nota"> Nota de voz</button><button id="ldocs">🔄 Documentos</button><button id="lfb">📨 Feedbacks</button><button id="rep">📊 Reporte</button><button id="scraper">🕷️ Actualizar desde web</button>
 <div id="dlist"></div><span class="etiq">🗑️ Borrar</span><input id="fdel" placeholder="Nombre (Enter)"><button id="bdel">🗑️</button><div id="fest"></div>
 </div></div>
-<div class="bar"><button id="mic">🎤</button><input id="inp" placeholder="Escribe o dime tu pregunta…"><button id="send">➤</button><button id="fb">🚩</button></div>
+<div class="bar"><button id="mic">🎤</button><input id="inp" placeholder="Escribe o dime tu pregunta…"><button id="send"></button><button id="fb">🚩</button></div>
 </main></div>
 <script>
 let hist=[],state={pending:false,active:false},langPref="auto",rec=null,rec2=null,chunks=[],currentId=uid(),droppedFile=null,thinkTimer=null,thinkSec=0,toastTimer=null,lastP="",lastR="",capPend="",fontScale=1;
 let currentUser=localStorage.getItem('uabc_user')||"",currentRol=localStorage.getItem('uabc_rol')||"externo";
 const chat=document.getElementById('chat'),inp=document.getElementById('inp');
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const B={es:'👋 ¡Hola! Soy <b>UABCBot Idiomas</b> de la Facultad de Idiomas UABC Mexicali. Te atiendo en español, inglés o francés: <b>te leo o te escucho</b>.',en:'👋 Hi! I am <b>UABCBot Idiomas</b>. I serve you in Spanish, English or French: <b>I read you or listen to you</b>.',fr:'👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>. Je t'aide en espagnol, anglais ou français : <b>je te lis ou je t'écoute</b>.'};
-const TB={es:'¡Hola! Soy UABCBot Idiomas. Te leo o te escucho en español, inglés o francés.',en:'Hi! I am UABCBot Idiomas. I read you or listen to you.',fr:'Bonjour ! Je suis UABCBot Idiomas. Je te lis ou je t'écoute.'};
+const B={es:'👋 ¡Hola! Soy <b>UABCBot Idiomas</b> de la Facultad de Idiomas UABC Mexicali. Te atiendo en español, inglés o francés: <b>te leo o te escucho</b>.',en:'👋 Hi! I am <b>UABCBot Idiomas</b>. I serve you in Spanish, English or French: <b>I read you or listen to you</b>.',fr:'👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>. Je t\'aide en espagnol, anglais ou français : <b>je te lis ou je t\'écoute</b>.'};
+const TB={es:'¡Hola! Soy UABCBot Idiomas. Te leo o te escucho en español, inglés o francés.',en:'Hi! I am UABCBot Idiomas. I read you or listen to you.',fr:'Bonjour ! Je suis UABCBot Idiomas. Je te lis ou je t\'écoute.'};
 const N={es:'Docentes: di "administración". Comunidad UABC: regístrate con @uabc.edu.mx. Si algo no te resuelve, toca 🚩.',en:'Staff: type "administración". UABC: register with @uabc.edu.mx. If not solved, tap 🚩.',fr:'Personnel : « administración ». UABC : inscris-toi avec @uabc.edu.mx. Sinon, touche .'};
-const G={es:'👋 Invitado: sin memoria. Regístrate con .',en:'👋 Guest: no memory. Register with 👤.',fr:'👋 Invité : pas de mémoire.'};
-const UI={es:{sub:"Facultad de Idiomas de la UABC en Mexicali",side:"🗂️ Conversaciones",new:"➕ Nueva conversación",ph:"Escribe o dime tu pregunta…",ut:" Tu cuenta",reg:"✨ Registrarme",log:"🔑 Entrar",gue:" Invitado",out:"🚪 Cerrar sesión",co:"Correo (@uabc.edu.mx si eres UABC)",cl:"Clave"},en:{sub:"Faculty of Languages of UABC in Mexicali",side:"🗂️ Conversations",new:"➕ New conversation",ph:"Type or say your question…",ut:"👤 Your account",reg:"✨ Register",log:" Sign in",gue:"👋 Guest",out:"🚪 Sign out",co:"Email (@uabc.edu.mx if UABC)",cl:"Password"},fr:{sub:"Faculté de Langues de l'UABC à Mexicali",side:"️ Conversations",new:"➕ Nouvelle conversation",ph:"Écris ou dis ta question…",ut:"👤 Ton compte",reg:"✨ M'inscrire",log:"🔑 Entrer",gue:"👋 Invité",out:"🚪 Sortir",co:"Courriel (@uabc.edu.mx)",cl:"Mot de passe"}};
+const G={es:'👋 Invitado: sin memoria. Regístrate con 👤.',en:'👋 Guest: no memory. Register with 👤.',fr:'👋 Invité : pas de mémoire.'};
+const UI={es:{sub:"Facultad de Idiomas de la UABC en Mexicali",side:"🗂️ Conversaciones",new:"➕ Nueva conversación",ph:"Escribe o dime tu pregunta…",ut:"👤 Tu cuenta",reg:"✨ Registrarme",log:"🔑 Entrar",gue:"👋 Invitado",out:"🚪 Cerrar sesión",co:"Correo (@uabc.edu.mx si eres UABC)",cl:"Clave"},en:{sub:"Faculty of Languages of UABC in Mexicali",side:"🗂️ Conversations",new:"➕ New conversation",ph:"Type or say your question…",ut:"👤 Your account",reg:"✨ Register",log:"🔑 Sign in",gue:"👋 Guest",out:"🚪 Sign out",co:"Email (@uabc.edu.mx if UABC)",cl:"Password"},fr:{sub:"Faculté de Langues de l'UABC à Mexicali",side:"️ Conversations",new:"➕ Nouvelle conversation",ph:"Écris ou dis ta question…",ut:"👤 Ton compte",reg:"✨ M'inscrire",log:"🔑 Entrer",gue:"👋 Invité",out:"🚪 Sortir",co:"Courriel (@uabc.edu.mx)",cl:"Mot de passe"}};
 const WHO={es:{i:' · ✅ comunidad UABC',e:' · público',g:'👋 Invitado: sin memoria.'},en:{i:' · ✅ UABC community',e:' · public',g:'👋 Guest: no memory.'},fr:{i:' · ✅ communauté UABC',e:' · public',g:'👋 Invité.'}};
-const OB={"¿Cuántos créditos necesito para titularme en Traducción?":{es:"💳 Créditos",en:" Credits",fr:"💳 Crédits"},"¿Cuánto cuesta inscribirme a las clases de inglés?":{es:"💰 Costo inglés",en:"💰 English cost",fr:" Coût"},"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?":{es:"🎓 Admisión",en:"🎓 Admission",fr:"🎓 Admission"},"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?":{es:"🏛️ Carreras",en:"🏛️ Degrees",fr:"🏛️ Licences"}};
+const OB={"¿Cuántos créditos necesito para titularme en Traducción?":{es:"💳 Créditos",en:"💳 Credits",fr:"💳 Crédits"},"¿Cuánto cuesta inscribirme a las clases de inglés?":{es:"💰 Costo inglés",en:"💰 English cost",fr:" Coût"},"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?":{es:"🎓 Admisión",en:"🎓 Admission",fr:"🎓 Admission"},"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?":{es:"️ Carreras",en:"️ Degrees",fr:"🏛️ Licences"}};
 function uid(){return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function langUI(){return (langPref in B)?langPref:'es'}
 function applyFont(){document.documentElement.style.setProperty('--fs',fontScale)}
@@ -792,7 +792,7 @@ chat.scrollTop=chat.scrollHeight}
 function thinking(){removeThink();const d=document.createElement('div');d.className='msg bot think';d.id='think';d.innerHTML='<div class="bub">🤔 <span id="tsec">0</span> s</div>';chat.appendChild(d);thinkSec=0;thinkTimer=setInterval(()=>{thinkSec++;const e=document.getElementById('tsec');if(e)e.textContent=thinkSec},1000)}
 function removeThink(){if(thinkTimer){clearInterval(thinkTimer);thinkTimer=null}const t=document.getElementById('think');if(t)t.remove()}
 function refreshWho(){const L=langUI(),w=WHO[L];who.innerText=currentUser?'✅ '+currentUser+(currentRol==='interno'?w.i:w.e):w.g}
-function doLogout(){currentUser="";currentRol="externo";localStorage.removeItem('uabc_user');localStorage.removeItem('uabc_rol');refreshWho();loadList();udrawer.style.display='none';avisar('👋')}
+function doLogout(){currentUser="";currentRol="externo";localStorage.removeItem('uabc_user');localStorage.removeItem('uabc_rol');refreshWho();loadList();udrawer.style.display='none';avisar('')}
 function saveConv(){if(!currentUser)return;const t=((hist.find(m=>m.role==='user')||{}).content||'Nueva').slice(0,40);fetch('/api/conv/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:currentId,user:currentUser,titulo:t,msgs:hist})}).then(loadList)}
 async function loadList(){if(!currentUser){const m='<small>'+(G[langUI()]||G.es)+'</small>';lista.innerHTML=m;lista2.innerHTML=m;return}
 const d=await(await fetch('/api/conv/list?user='+encodeURIComponent(currentUser))).json();const h=d.map(c=>'<button class="item" data-id="'+c.id+'">'+esc(c.titulo)+'</button>').join('');lista.innerHTML=h||'<small>—</small>';lista2.innerHTML=h||'<small>—</small>';document.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>openConv(b.dataset.id))}
@@ -814,26 +814,26 @@ fbsend.onclick=async()=>{avisar('⏳ Enviando…');await fetch('/api/feedback',{
 ureg.onclick=async()=>{const d=await(await fetch('/api/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({usuario:uusr.value,clave:ukey.value})})).json();if(!d.ok)return avisar(d.error,'error');currentUser=d.usuario;currentRol=d.rol;localStorage.setItem('uabc_user',currentUser);localStorage.setItem('uabc_rol',currentRol);refreshWho();loadList();udrawer.style.display='none';avisar('✅ '+currentUser,'ok')};
 ulin.onclick=async()=>{const d=await(await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({usuario:uusr.value,clave:ukey.value})})).json();if(!d.ok)return avisar(d.error,'error');currentUser=d.usuario;currentRol=d.rol;localStorage.setItem('uabc_user',currentUser);localStorage.setItem('uabc_rol',currentRol);refreshWho();loadList();udrawer.style.display='none';avisar('✅ '+currentUser,'ok')};
 uguest.onclick=doLogout;uout.onclick=doLogout;
-[['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id,v])=>{document.getElementById(id).onclick=e=>{langPref=v;document.querySelectorAll('.langs button').forEach(x=>x.classList.remove('on'));e.target.classList.add('on');applyLang(langUI());refreshWho();loadList();if(!hist.length){chat.innerHTML='';welcome()}else avisar('🌐 '+v.toUpperCase())}});
+[['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id,v])=>{document.getElementById(id).onclick=e=>{langPref=v;document.querySelectorAll('.langs button').forEach(x=>x.classList.remove('on'));e.target.classList.add('on');applyLang(langUI());refreshWho();loadList();if(!hist.length){chat.innerHTML='';welcome()}else avisar(' '+v.toUpperCase())}});
 drop.onclick=()=>ffile.click();drop.ondragover=e=>e.preventDefault();drop.ondrop=e=>{e.preventDefault();if(e.dataTransfer.files[0])marcar(e.dataTransfer.files[0])};
 ffile.onchange=e=>{if(e.target.files[0])marcar(e.target.files[0])};
 function marcar(f){droppedFile=f;drop.innerHTML='📎 '+esc(f.name);avisar('📎 '+f.name)}
-cadd.onclick=async()=>{if(!ctema.value||!cnom.value)return avisar('⚠️ Tema y nombre obligatorios','error');await fetch('/api/cat/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tema:ctema.value,kw:ckw.value,nombre:cnom.value,rol:crol.value,correo:ccor.value,tel:ctel.value,oficina:cof.value,horario:chor.value})});ctema.value=ckw.value=cnom.value=crol.value=ccor.value=ctel.value=cof.value=chor.value='';avisar(' Responsable agregado al catálogo','ok')};
-radd.onclick=async()=>{if(!rnom.value)return avisar('️ Falta nombre','error');await fetch('/api/resp/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:rnom.value,correo:rcor.value,rol:rrol.value,clases:rcla.value})});rnom.value=rcor.value=rrol.value=rcla.value='';loadResp();avisar('👥 Agregado al directorio','ok')};
-mic.onclick=async()=>{if(rec&&rec.state==='recording'){rec.stop();return}const s=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];rec=new MediaRecorder(s);rec.ondataavailable=e=>chunks.push(e.data);rec.onstop=async()=>{s.getTracks().forEach(t=>t.stop());mic.classList.remove('rec');thinking();const fd=new FormData();fd.append('audio',new Blob(chunks,{type:'audio/webm'}),'voz.webm');fd.append('hist',JSON.stringify(hist.slice(-7)));fd.append('state',JSON.stringify(state));fd.append('lang',langPref);fd.append('rol',currentRol);const d=await(await fetch('/api/voice',{method:'POST',body:fd})).json();removeThink();state=d.state;if(langPref==='auto'&&d.lang)applyLang(d.lang);if(d.texto){bubble('user','🎤 '+d.texto);hist.push({role:'user',content:d.texto});lastP=d.texto}if(d.reply){bubble('bot',d.reply,d.audio);hist.push({role:'assistant',content:d.reply,audio:d.audio});lastR=d.reply}saveConv()};rec.start();mic.classList.add('rec');avisar(' Grabando…')};
+cadd.onclick=async()=>{if(!ctema.value||!cnom.value)return avisar('️ Tema y nombre obligatorios','error');await fetch('/api/cat/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tema:ctema.value,kw:ckw.value,nombre:cnom.value,rol:crol.value,correo:ccor.value,tel:ctel.value,oficina:cof.value,horario:chor.value})});ctema.value=ckw.value=cnom.value=crol.value=ccor.value=ctel.value=cof.value=chor.value='';avisar('📇 Responsable agregado al catálogo','ok')};
+radd.onclick=async()=>{if(!rnom.value)return avisar('⚠️ Falta nombre','error');await fetch('/api/resp/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:rnom.value,correo:rcor.value,rol:rrol.value,clases:rcla.value})});rnom.value=rcor.value=rrol.value=rcla.value='';loadResp();avisar(' Agregado al directorio','ok')};
+mic.onclick=async()=>{if(rec&&rec.state==='recording'){rec.stop();return}const s=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];rec=new MediaRecorder(s);rec.ondataavailable=e=>chunks.push(e.data);rec.onstop=async()=>{s.getTracks().forEach(t=>t.stop());mic.classList.remove('rec');thinking();const fd=new FormData();fd.append('audio',new Blob(chunks,{type:'audio/webm'}),'voz.webm');fd.append('hist',JSON.stringify(hist.slice(-7)));fd.append('state',JSON.stringify(state));fd.append('lang',langPref);fd.append('rol',currentRol);const d=await(await fetch('/api/voice',{method:'POST',body:fd})).json();removeThink();state=d.state;if(langPref==='auto'&&d.lang)applyLang(d.lang);if(d.texto){bubble('user','🎤 '+d.texto);hist.push({role:'user',content:d.texto});lastP=d.texto}if(d.reply){bubble('bot',d.reply,d.audio);hist.push({role:'assistant',content:d.reply,audio:d.audio});lastR=d.reply}saveConv()};rec.start();mic.classList.add('rec');avisar('🎤 Grabando…')};
 gear.onclick=()=>{drawer.style.display=drawer.style.display==='block'?'none':'block'};
 salirp.onclick=()=>{state={pending:false,active:false};drawer.style.display='none';zona.style.display='none'};
 clave.onkeydown=e=>{if(e.key==='Enter')unlock.click()};fdel.onkeydown=e=>{if(e.key==='Enter')bdel.click()};
 unlock.onclick=async()=>{const r=await fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:clave.value})});const d=await r.json();zona.style.display=d.ok?'block':'none';if(d.ok){loadDocs();loadResp();avisar('✅ Panel abierto','ok')}else avisar('❌ Clave','error')};
-fsubir.onclick=async()=>{const f=ffile.files[0]||droppedFile;if(!f&&!ftexto.value.trim())return avisar('️ Elige archivo o texto','error');avisar('⏳ Publicando…');const fd=new FormData();if(f)fd.append('archivo',f);fd.append('categoria',fcat.value);fd.append('vigencia',fvig.value);fd.append('reemplazar','0');fd.append('texto_manual',ftexto.value);fd.append('responsable',fresp.value||currentUser);const d=await(await fetch('/api/upload',{method:'POST',body:fd})).json();fest.innerText=d.estado;avisar(d.estado,d.estado.startsWith('✅')?'ok':'error');loadDocs()};
+fsubir.onclick=async()=>{const f=ffile.files[0]||droppedFile;if(!f&&!ftexto.value.trim())return avisar('⚠️ Elige archivo o texto','error');avisar(' Publicando…');const fd=new FormData();if(f)fd.append('archivo',f);fd.append('categoria',fcat.value);fd.append('vigencia',fvig.value);fd.append('reemplazar','0');fd.append('texto_manual',ftexto.value);fd.append('responsable',fresp.value||currentUser);const d=await(await fetch('/api/upload',{method:'POST',body:fd})).json();fest.innerText=d.estado;avisar(d.estado,d.estado.startsWith('✅')?'ok':'error');loadDocs()};
 ldocs.onclick=loadDocs;async function loadDocs(){const d=await(await fetch('/api/docs')).json();dlist.innerText=(d.docs||[]).join('\\n')||'—'}
 lfb.onclick=async()=>{const d=await(await fetch('/api/feedback/list?clave='+encodeURIComponent(clave.value))).json();fest.innerText=(d.items||[]).join('\\n----------\\n');avisar('📨 Feedbacks','ok')};
 bdel.onclick=async()=>{const d=await(await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:clave.value,nombre:fdel.value})})).json();fest.innerText=d.estado;avisar(d.estado,'ok');loadDocs()};
 nota.onclick=async()=>{if(rec2&&rec2.state==='recording'){rec2.stop();return}const s=await navigator.mediaDevices.getUserMedia({audio:true});let ch=[];rec2=new MediaRecorder(s);rec2.ondataavailable=e=>ch.push(e.data);rec2.onstop=async()=>{s.getTracks().forEach(t=>t.stop());avisar('⏳ Transcribiendo…');const fd=new FormData();fd.append('audio',new Blob(ch,{type:'audio/webm'}),'nota.webm');fd.append('categoria',fcat.value);fd.append('responsable',fresp.value||currentUser);const d=await(await fetch('/api/voice_note',{method:'POST',body:fd})).json();fest.innerText=d.estado;avisar(d.estado,d.estado.startsWith('✅')?'ok':'error');loadDocs()};rec2.start();avisar('🔴 Grabando…')};
 rep.onclick=async()=>{const d=await(await fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:clave.value})})).json();if(d.error)return avisar(d.error,'error');
 let t='📊 Total: '+d.total+' · Hoy: '+d.hoy+' · Catálogo: '+d.catalogo+'\\n\\n🔥 MÁS PREGUNTADAS:\\n'+d.top.map((x,i)=>(i+1)+'. '+x[0]+' ('+x[1]+')').join('\\n');
-t+='\\n\\n🚩 PENDIENTES (pedir corrección):\\n'+((d.pendientes||[]).map(p=>'• ['+p.area+'] '+p.pregunta+' → '+p.responsable).join('\\n')||'• Sin pendientes ');
-t+='\\n\\n QUIÉN SUBIÓ QUÉ:\\n'+((d.subidas||[]).map(s=>'• '+s.responsable+' → '+s.categoria+' ('+s.archivo+')').join('\\n')||'• —');
+t+='\\n\\n🚩 PENDIENTES (pedir corrección):\\n'+((d.pendientes||[]).map(p=>'• ['+p.area+'] '+p.pregunta+' → '+p.responsable).join('\\n')||'• Sin pendientes 🎉');
+t+='\\n\\n📤 QUIÉN SUBIÓ QUÉ:\\n'+((d.subidas||[]).map(s=>'• '+s.responsable+' → '+s.categoria+' ('+s.archivo+')').join('\\n')||'• —');
 fest.innerText=t;avisar('📊 Reporte listo','ok')};
 scraper.onclick=async()=>{
     const clave=prompt("🔐 Clave de administrador del scraper:");
@@ -844,7 +844,7 @@ scraper.onclick=async()=>{
     const r=d.resultados;
     let t=' Páginas actualizadas: '+r.paginas_actualizadas.length+'\\n';
     r.paginas_actualizadas.forEach(p=>t+='  • '+p.nombre+': '+p.caracteres+' chars\\n');
-    t+='\\n🔍 Inconsistencias: '+r.inconsistencias.length+'\\n';
+    t+='\\n Inconsistencias: '+r.inconsistencias.length+'\\n';
     r.inconsistencias.forEach(i=>t+='  '+i+'\\n');
     if(r.errores.length){t+='\\n❌ Errores: '+r.errores.length+'\\n';r.errores.forEach(e=>t+='  '+e+'\\n')}
     fest.innerText=t;
