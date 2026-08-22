@@ -1,13 +1,14 @@
-import os, re, uuid, json, time, base64, hashlib, secrets, tempfile, requests
+import os, re, uuid, json, time, base64, hashlib, secrets, tempfile, requests, asyncio
 from datetime import datetime, date, timedelta
 from collections import Counter
 from google import genai as genai_lib
 from google.genai import types as gtypes
 from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from bs4 import BeautifulSoup
 import uvicorn
 
-VERSION = "v20-2026-08-21"
+VERSION = "v21-2026-08-22"
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
 CARPETA = os.path.join(BASE, "datos_bot")
@@ -38,7 +39,6 @@ cliente_gemini = _mk_client(GEMINI_KEY); cliente_gemini2 = _mk_client(GEMINI_KEY
 
 AREAS_RESP = {"Admisión":"admision.mxl@uabc.edu.mx","CEC":"recepcionmxl@uabc.edu.mx","Escolar/Escolaridad":"escolares_idiomas_mxl@uabc.edu.mx","Egresados/Bolsa de trabajo":"egresados__idiomas__mxl@uabc.edu.mx","Eventos":"idiomas.mxl@uabc.edu.mx","Otro":"idiomas.mxl@uabc.edu.mx"}
 
-# ===== CATÁLOGO DE RESPONSABLES (por tema) =====
 CAT_DEF = [
  {"tema":"Doctorado / Posgrado (DCL)","kw":["doctorado","doctorados","dcl","posgrado","doctor"],"nombre":"Dr. Maldonado","rol":"Responsable de Doctorados","correo":"","tel":"686-689-0825","oficina":"","horario":""},
  {"tema":"Titulación","kw":["titulacion","titulación","titularme","titular"],"nombre":"Responsable de Titulación","rol":"Titulación","correo":"","tel":"686-689-0825","oficina":"","horario":""},
@@ -46,10 +46,9 @@ CAT_DEF = [
  {"tema":"Egresados / Bolsa de trabajo","kw":["egresado","egresados","bolsa","empleo"],"nombre":"Mtra. Dulce Rodríguez Díaz","rol":"Responsable de Egresados y Bolsa de Trabajo","correo":"egresados__idiomas__mxl@uabc.edu.mx","tel":"686-689-0825","oficina":"","horario":""},
 ]
 def cargar_catalogo():
-    cat = list(CAT_DEF)
-    try: cat += _jload(CATALOGO, [])
-    except Exception: pass
-    return cat
+    try: cat = _jload(CATALOGO, [])
+    except Exception: cat = []
+    return cat + list(CAT_DEF)
 def resp_catalogo(e):
     s = f"Sobre {e['tema']}, te atiende directamente {e['nombre']}" + (f" ({e['rol']})" if e.get('rol') else "") + "."
     c = []
@@ -233,11 +232,9 @@ def _hash(c,s): return hashlib.sha256((s+c).encode()).hexdigest()
 def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     p=(pregunta or "").lower()
     lang = lang_pref if lang_pref in ("es","en","fr") else detectar_idioma(pregunta)
-    # 1) Catálogo de responsables (respuesta directa, sin vueltas)
     for e in cargar_catalogo():
         if any(k in p for k in e["kw"]):
             return resp_catalogo(e), lang
-    # 2) Memoria oficial (salvo preguntas de costo)
     if not any(k in p for k in ("cuanto","cuánto","cuesta","costo","precio","inscri")):
         for claves,trad in MEMORIA_OFICIAL:
             if any(k in p for k in claves): return trad.get(lang,trad["es"]),lang
@@ -255,7 +252,7 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     if not _es_valida(texto):
         fb=respuesta_de_documentos(pregunta,rol)
         if fb: return fb,lang
-    if not _es_valida(texto): texto="⚠️ Motores saturados. Intenta en unos segundos."
+    if not _es_valida(texto): texto="️ Motores saturados. Intenta en unos segundos."
     texto=re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+","",texto).strip()
     if _es_cacheable(texto): cache[clave]=[texto,lang]; _guardar_cache(cache)
     return texto,lang
@@ -415,6 +412,133 @@ async def cat_add(req:Request):
 async def cat_list(): return cargar_catalogo()
 @app.get("/api/docs_meta")
 async def docs_meta(): return _jload(DOCS_META,[])
+
+# ================= SCRAPER WEB CON REPORTE =================
+PAGINAS_FACULTAD = {
+    "PracticasProfesionales": "https://idiomas.mxl.uabc.mx/practicas-profesionales/",
+    "Admision": "https://idiomas.mxl.uabc.mx/admision/",
+    "CEC": "https://idiomas.mxl.uabc.mx/cec/",
+    "Titulacion": "https://idiomas.mxl.uabc.mx/titulacion/",
+    "Egresados": "https://idiomas.mxl.uabc.mx/egresados/",
+    "Posgrado": "https://idiomas.mxl.uabc.mx/posgrado/",
+    "OfertaEducativa": "https://idiomas.mxl.uabc.mx/oferta-educativa/",
+    "Inicio": "https://idiomas.mxl.uabc.mx/",
+}
+PAGINAS_UABC = {
+    "UABC_Inicio": "https://www.uabc.mx/",
+    "UABC_Calendario": "https://www.uabc.mx/calendario",
+    "UABC_OfertaEducativa": "https://www.uabc.mx/oferta",
+}
+
+def limpiar_html(html):
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "header", "footer"]):
+        tag.decompose()
+    texto = soup.get_text(separator="\n", strip=True)
+    return "\n".join([l.strip() for l in texto.splitlines() if l.strip()])
+
+def extraer_info_clave(texto, pagina):
+    info = {"nombres": [], "correos": [], "telefonos": [], "fechas": [], "texto_completo": texto[:2000]}
+    nombres = re.findall(r"(?:Dr|Dra|Mtro|Mtra|Lic|Ing|Prof)\.?\s+[A-Z][a-záéíóú]+\s+[A-Z][a-záéíóú]+", texto)
+    info["nombres"] = list(set(nombres))[:10]
+    correos = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", texto)
+    info["correos"] = list(set(correos))[:10]
+    telefonos = re.findall(r"(?:\(\d{3}\)\s*)?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}(?:\s*[Ee]xt\.?\s*\d+)?", texto)
+    info["telefonos"] = list(set(telefonos))[:5]
+    fechas = re.findall(r"\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+\d{4}", texto)
+    info["fechas"] = list(set(fechas))[:10]
+    return info
+
+def detectar_inconsistencias(info_web, info_bot, pagina):
+    inconsistencias = []
+    for nombre in info_web.get("nombres", []):
+        if nombre not in str(info_bot):
+            inconsistencias.append(f"🔍 Nombre detectado en {pagina}: {nombre} (no está en el catálogo del bot)")
+    for correo in info_web.get("correos", []):
+        if "@uabc.edu.mx" in correo and correo not in str(info_bot):
+            inconsistencias.append(f"📧 Correo detectado en {pagina}: {correo}")
+    for tel in info_web.get("telefonos", []):
+        if tel not in str(info_bot):
+            inconsistencias.append(f"📞 Teléfono detectado en {pagina}: {tel}")
+    return inconsistencias
+
+async def ejecutar_scraper():
+    resultados = {"paginas_actualizadas": [], "inconsistencias": [], "errores": [], "fecha": datetime.now().isoformat()}
+    catalogo_bot = cargar_catalogo()
+    responsables_bot = _jload(RESPONSABLES, [])
+    info_bot = {"catalogo": catalogo_bot, "responsables": responsables_bot}
+    headers = {"User-Agent": "UABCBot-Scraper/1.0"}
+    for nombre, url in PAGINAS_FACULTAD.items():
+        try:
+            r = requests.get(url, headers=headers, timeout=20)
+            if r.status_code != 200:
+                resultados["errores"].append(f"{nombre}: HTTP {r.status_code}")
+                continue
+            texto = limpiar_html(r.text)
+            info_web = extraer_info_clave(texto, nombre)
+            inconsistencias = detectar_inconsistencias(info_web, info_bot, nombre)
+            hoy = datetime.now().strftime("%Y%m%d")
+            archivo = f"{hoy}_{nombre}.txt"
+            cabecera = f"=== {nombre} | Barrido: {datetime.now().strftime('%d/%m/%Y %H:%M')} | Fuente: {url} ===\n"
+            with open(os.path.join(CARPETA, archivo), "w", encoding="utf-8") as f:
+                f.write(cabecera + texto)
+            resultados["paginas_actualizadas"].append({"nombre": nombre, "url": url, "caracteres": len(texto)})
+            resultados["inconsistencias"].extend(inconsistencias)
+            try: os.remove(CACHE)
+            except Exception: pass
+            await asyncio.sleep(1)
+        except Exception as e:
+            resultados["errores"].append(f"{nombre}: {str(e)}")
+    for nombre, url in PAGINAS_UABC.items():
+        try:
+            r = requests.get(url, headers=headers, timeout=20)
+            if r.status_code != 200:
+                resultados["errores"].append(f"{nombre}: HTTP {r.status_code}")
+                continue
+            texto = limpiar_html(r.text)
+            hoy = datetime.now().strftime("%Y%m%d")
+            archivo = f"{hoy}_{nombre}.txt"
+            cabecera = f"=== {nombre} | Barrido: {datetime.now().strftime('%d/%m/%Y %H:%M')} | Fuente: {url} ===\n"
+            with open(os.path.join(CARPETA, archivo), "w", encoding="utf-8") as f:
+                f.write(cabecera + texto)
+            resultados["paginas_actualizadas"].append({"nombre": nombre, "url": url, "caracteres": len(texto)})
+            await asyncio.sleep(1)
+        except Exception as e:
+            resultados["errores"].append(f"{nombre}: {str(e)}")
+    reporte_txt = f"=== REPORTE DE BARRIDO WEB {datetime.now().strftime('%d/%m/%Y %H:%M')} ===\n\n"
+    reporte_txt += f"Páginas actualizadas: {len(resultados['paginas_actualizadas'])}\n"
+    for p in resultados['paginas_actualizadas']:
+        reporte_txt += f"  • {p['nombre']}: {p['caracteres']} chars\n"
+    reporte_txt += f"\nInconsistencias detectadas: {len(resultados['inconsistencias'])}\n"
+    for i in resultados['inconsistencias']:
+        reporte_txt += f"  {i}\n"
+    if resultados['errores']:
+        reporte_txt += f"\nErrores: {len(resultados['errores'])}\n"
+        for e in resultados['errores']:
+            reporte_txt += f"  ❌ {e}\n"
+    with open(os.path.join(BASE, "reporte_scraper.txt"), "w", encoding="utf-8") as f:
+        f.write(reporte_txt)
+    return resultados
+
+@app.post("/api/scraper/run")
+async def api_scraper_run(req: Request):
+    d = await req.json()
+    if d.get("clave") != "adminfimxl2026":
+        return {"error": "❌ Clave incorrecta"}
+    try:
+        resultados = await ejecutar_scraper()
+        return {"ok": True, "resultados": resultados}
+    except Exception as e:
+        return {"error": f"❌ Error: {type(e).__name__}: {e}"}
+
+@app.get("/api/scraper/reporte")
+async def api_scraper_reporte():
+    try:
+        with open(os.path.join(BASE, "reporte_scraper.txt"), encoding="utf-8") as f:
+            return {"reporte": f.read()}
+    except Exception:
+        return {"reporte": "Sin reporte generado aún."}
+
 @app.post("/api/report")
 async def report(req:Request):
     d=await req.json()
@@ -485,7 +609,7 @@ async def api_upload(archivo:UploadFile=File(None),categoria:str=Form("Avisos"),
         iname=str(uuid.uuid4())+ext; open(os.path.join(IMGS,iname),"wb").write(data); texto+=f"\n🖼️ Póster: /img/{iname}"
     elif data:
         tmp=os.path.join(BASE,"tmp_"+nom); open(tmp,"wb").write(data); texto=extraer_texto(tmp,nom) or texto; os.remove(tmp)
-    if not texto: return {"estado":"⚠️ Elige archivo o pega texto en 📝."}
+    if not texto: return {"estado":"⚠️ Elige archivo o pega texto en ."}
     if reemplazar=="1":
         for fn in list(os.listdir(CARPETA)):
             if fn.endswith(f"_{categoria}.txt"): os.remove(os.path.join(CARPETA,fn)); github_borrar(f"datos_bot/{fn}")
@@ -609,20 +733,20 @@ header img{width:54px;height:54px;background:#fff;border-radius:12px;padding:3px
 <header>
 <img src="/logo.png" alt="logo"><div><h1>UABCBot Idiomas</h1><p id="hsub">Facultad de Idiomas de la UABC en Mexicali</p></div>
 <div class="langs"><button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button></div>
-<div class="langs" style="margin-left:4px"><button id="fmenos">A−</button><button id="fmas">A+</button><button id="full">⛶</button></div>
-<button id="convs" class="hbtn">🗂️</button><button id="user" class="hbtn">👤</button><button id="logout" class="hbtn">🚪</button><button id="nuevo" class="hbtn">🧹</button>
+<div class="langs" style="margin-left:4px"><button id="fmenos">A−</button><button id="fmas">A+</button><button id="full"></button></div>
+<button id="convs" class="hbtn">🗂️</button><button id="user" class="hbtn">👤</button><button id="logout" class="hbtn">🚪</button><button id="nuevo" class="hbtn"></button>
 </header>
 <button id="gear">⚙️</button>
 <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖</button><b id="sidet2">🗂️ Conversaciones</b><div id="lista2"></div></div>
 <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖</button><b id="utitle">👤 Tu cuenta</b><div id="who"></div>
 <input id="uusr" placeholder="Correo (@uabc.edu.mx si eres UABC)"><input id="ukey" type="password" placeholder="Clave">
-<button id="ureg">✨ Registrarme</button><button id="ulin">🔑 Entrar</button><button id="uguest">👋 Invitado</button><button id="uout">🚪 Cerrar sesión</button></div>
+<button id="ureg">✨ Registrarme</button><button id="ulin">🔑 Entrar</button><button id="uguest">👋 Invitado</button><button id="uout"> Cerrar sesión</button></div>
 <div id="chat"></div>
 <div id="fbdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖</button><b id="fbtitle">🚩 Reportar respuesta</b>
 <span class="etiq" id="fbarea_l">Área responsable</span><select id="fbarea"><option>Admisión</option><option>CEC</option><option>Escolar/Escolaridad</option><option>Egresados/Bolsa de trabajo</option><option>Eventos</option><option>Otro</option></select>
 <span class="etiq" id="fbcom_l">Cuéntanos qué faltó</span><textarea id="fbcom" rows="3"></textarea><div id="fbprev" class="fb-captura">📸 Captura automática adjunta.</div>
 <button id="fbsend">📨 Enviar al responsable</button></div>
-<div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖</button><b>🛠️ Panel de personal</b>
+<div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖</button><b>️ Panel de personal</b>
 <input id="clave" type="password" placeholder="Clave (Enter)"><button id="unlock">🔓 Entrar</button><button id="salirp">🚪 Salir</button>
 <div id="zona" style="display:none">
 <span class="etiq">📇 Catálogo: agregar responsable por tema</span>
@@ -635,8 +759,8 @@ header img{width:54px;height:54px;background:#fff;border-radius:12px;padding:3px
 <span class="etiq">✍️ Responsable</span><input id="fresp" list="resplist" placeholder="Nombre"><datalist id="resplist"></datalist>
 <span class="etiq">2️⃣ Vigente hasta</span><input id="fvig" type="date">
 <span class="etiq">3️⃣ Archivo</span><div id="drop">📥 Arrastra o toca</div><input id="ffile" type="file" style="display:none">
-<span class="etiq">📝 Texto (plan B)</span><textarea id="ftexto" rows="4"></textarea>
-<button id="fsubir">📤 Subir y publicar</button><button id="nota">🎤 Nota de voz</button><button id="ldocs">🔄 Documentos</button><button id="lfb">📨 Feedbacks</button><button id="rep">📊 Reporte</button>
+<span class="etiq"> Texto (plan B)</span><textarea id="ftexto" rows="4"></textarea>
+<button id="fsubir">📤 Subir y publicar</button><button id="nota">🎤 Nota de voz</button><button id="ldocs">🔄 Documentos</button><button id="lfb">📨 Feedbacks</button><button id="rep">📊 Reporte</button><button id="scraper">🕷️ Actualizar desde web</button>
 <div id="dlist"></div><span class="etiq">🗑️ Borrar</span><input id="fdel" placeholder="Nombre (Enter)"><button id="bdel">🗑️</button><div id="fest"></div>
 </div></div>
 <div class="bar"><button id="mic">🎤</button><input id="inp" placeholder="Escribe o dime tu pregunta…"><button id="send">➤</button><button id="fb">🚩</button></div>
@@ -646,13 +770,13 @@ let hist=[],state={pending:false,active:false},langPref="auto",rec=null,rec2=nul
 let currentUser=localStorage.getItem('uabc_user')||"",currentRol=localStorage.getItem('uabc_rol')||"externo";
 const chat=document.getElementById('chat'),inp=document.getElementById('inp');
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const B={es:'👋 ¡Hola! Soy <b>UABCBot Idiomas</b> de la Facultad de Idiomas UABC Mexicali. Te atiendo en español, inglés o francés: <b>te leo o te escucho</b>.',en:'👋 Hi! I am <b>UABCBot Idiomas</b>. I serve you in Spanish, English or French: <b>I read you or listen to you</b>.',fr:'👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>. Je t’aide en espagnol, anglais ou français : <b>je te lis ou je t’écoute</b>.'};
-const TB={es:'¡Hola! Soy UABCBot Idiomas. Te leo o te escucho en español, inglés o francés.',en:'Hi! I am UABCBot Idiomas. I read you or listen to you.',fr:'Bonjour ! Je suis UABCBot Idiomas. Je te lis ou je t’écoute.'};
-const N={es:'Docentes: di "administración". Comunidad UABC: regístrate con @uabc.edu.mx. Si algo no te resuelve, toca 🚩.',en:'Staff: type "administración". UABC: register with @uabc.edu.mx. If not solved, tap 🚩.',fr:'Personnel : « administración ». UABC : inscris-toi avec @uabc.edu.mx. Sinon, touche 🚩.'};
-const G={es:'👋 Invitado: sin memoria. Regístrate con 👤.',en:'👋 Guest: no memory. Register with 👤.',fr:'👋 Invité : pas de mémoire.'};
-const UI={es:{sub:"Facultad de Idiomas de la UABC en Mexicali",side:"🗂️ Conversaciones",new:"➕ Nueva conversación",ph:"Escribe o dime tu pregunta…",ut:"👤 Tu cuenta",reg:"✨ Registrarme",log:"🔑 Entrar",gue:"👋 Invitado",out:"🚪 Cerrar sesión",co:"Correo (@uabc.edu.mx si eres UABC)",cl:"Clave"},en:{sub:"Faculty of Languages of UABC in Mexicali",side:"🗂️ Conversations",new:"➕ New conversation",ph:"Type or say your question…",ut:"👤 Your account",reg:"✨ Register",log:"🔑 Sign in",gue:"👋 Guest",out:"🚪 Sign out",co:"Email (@uabc.edu.mx if UABC)",cl:"Password"},fr:{sub:"Faculté de Langues de l’UABC à Mexicali",side:"🗂️ Conversations",new:"➕ Nouvelle conversation",ph:"Écris ou dis ta question…",ut:"👤 Ton compte",reg:"✨ M’inscrire",log:"🔑 Entrer",gue:"👋 Invité",out:"🚪 Sortir",co:"Courriel (@uabc.edu.mx)",cl:"Mot de passe"}};
+const B={es:'👋 ¡Hola! Soy <b>UABCBot Idiomas</b> de la Facultad de Idiomas UABC Mexicali. Te atiendo en español, inglés o francés: <b>te leo o te escucho</b>.',en:'👋 Hi! I am <b>UABCBot Idiomas</b>. I serve you in Spanish, English or French: <b>I read you or listen to you</b>.',fr:'👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>. Je t'aide en espagnol, anglais ou français : <b>je te lis ou je t'écoute</b>.'};
+const TB={es:'¡Hola! Soy UABCBot Idiomas. Te leo o te escucho en español, inglés o francés.',en:'Hi! I am UABCBot Idiomas. I read you or listen to you.',fr:'Bonjour ! Je suis UABCBot Idiomas. Je te lis ou je t'écoute.'};
+const N={es:'Docentes: di "administración". Comunidad UABC: regístrate con @uabc.edu.mx. Si algo no te resuelve, toca 🚩.',en:'Staff: type "administración". UABC: register with @uabc.edu.mx. If not solved, tap 🚩.',fr:'Personnel : « administración ». UABC : inscris-toi avec @uabc.edu.mx. Sinon, touche .'};
+const G={es:'👋 Invitado: sin memoria. Regístrate con .',en:'👋 Guest: no memory. Register with 👤.',fr:'👋 Invité : pas de mémoire.'};
+const UI={es:{sub:"Facultad de Idiomas de la UABC en Mexicali",side:"🗂️ Conversaciones",new:"➕ Nueva conversación",ph:"Escribe o dime tu pregunta…",ut:" Tu cuenta",reg:"✨ Registrarme",log:"🔑 Entrar",gue:" Invitado",out:"🚪 Cerrar sesión",co:"Correo (@uabc.edu.mx si eres UABC)",cl:"Clave"},en:{sub:"Faculty of Languages of UABC in Mexicali",side:"🗂️ Conversations",new:"➕ New conversation",ph:"Type or say your question…",ut:"👤 Your account",reg:"✨ Register",log:" Sign in",gue:"👋 Guest",out:"🚪 Sign out",co:"Email (@uabc.edu.mx if UABC)",cl:"Password"},fr:{sub:"Faculté de Langues de l'UABC à Mexicali",side:"️ Conversations",new:"➕ Nouvelle conversation",ph:"Écris ou dis ta question…",ut:"👤 Ton compte",reg:"✨ M'inscrire",log:"🔑 Entrer",gue:"👋 Invité",out:"🚪 Sortir",co:"Courriel (@uabc.edu.mx)",cl:"Mot de passe"}};
 const WHO={es:{i:' · ✅ comunidad UABC',e:' · público',g:'👋 Invitado: sin memoria.'},en:{i:' · ✅ UABC community',e:' · public',g:'👋 Guest: no memory.'},fr:{i:' · ✅ communauté UABC',e:' · public',g:'👋 Invité.'}};
-const OB={"¿Cuántos créditos necesito para titularme en Traducción?":{es:"💳 Créditos",en:"💳 Credits",fr:"💳 Crédits"},"¿Cuánto cuesta inscribirme a las clases de inglés?":{es:"💰 Costo inglés",en:"💰 English cost",fr:"💰 Coût"},"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?":{es:"🎓 Admisión",en:"🎓 Admission",fr:"🎓 Admission"},"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?":{es:"🏛️ Carreras",en:"🏛️ Degrees",fr:"🏛️ Licences"}};
+const OB={"¿Cuántos créditos necesito para titularme en Traducción?":{es:"💳 Créditos",en:" Credits",fr:"💳 Crédits"},"¿Cuánto cuesta inscribirme a las clases de inglés?":{es:"💰 Costo inglés",en:"💰 English cost",fr:" Coût"},"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?":{es:"🎓 Admisión",en:"🎓 Admission",fr:"🎓 Admission"},"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?":{es:"🏛️ Carreras",en:"🏛️ Degrees",fr:"🏛️ Licences"}};
 function uid(){return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function langUI(){return (langPref in B)?langPref:'es'}
 function applyFont(){document.documentElement.style.setProperty('--fs',fontScale)}
@@ -694,23 +818,38 @@ uguest.onclick=doLogout;uout.onclick=doLogout;
 drop.onclick=()=>ffile.click();drop.ondragover=e=>e.preventDefault();drop.ondrop=e=>{e.preventDefault();if(e.dataTransfer.files[0])marcar(e.dataTransfer.files[0])};
 ffile.onchange=e=>{if(e.target.files[0])marcar(e.target.files[0])};
 function marcar(f){droppedFile=f;drop.innerHTML='📎 '+esc(f.name);avisar('📎 '+f.name)}
-cadd.onclick=async()=>{if(!ctema.value||!cnom.value)return avisar('⚠️ Tema y nombre obligatorios','error');await fetch('/api/cat/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tema:ctema.value,kw:ckw.value,nombre:cnom.value,rol:crol.value,correo:ccor.value,tel:ctel.value,oficina:cof.value,horario:chor.value})});ctema.value=ckw.value=cnom.value=crol.value=ccor.value=ctel.value=cof.value=chor.value='';avisar('📇 Responsable agregado al catálogo','ok')};
-radd.onclick=async()=>{if(!rnom.value)return avisar('⚠️ Falta nombre','error');await fetch('/api/resp/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:rnom.value,correo:rcor.value,rol:rrol.value,clases:rcla.value})});rnom.value=rcor.value=rrol.value=rcla.value='';loadResp();avisar('👥 Agregado al directorio','ok')};
-mic.onclick=async()=>{if(rec&&rec.state==='recording'){rec.stop();return}const s=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];rec=new MediaRecorder(s);rec.ondataavailable=e=>chunks.push(e.data);rec.onstop=async()=>{s.getTracks().forEach(t=>t.stop());mic.classList.remove('rec');thinking();const fd=new FormData();fd.append('audio',new Blob(chunks,{type:'audio/webm'}),'voz.webm');fd.append('hist',JSON.stringify(hist.slice(-7)));fd.append('state',JSON.stringify(state));fd.append('lang',langPref);fd.append('rol',currentRol);const d=await(await fetch('/api/voice',{method:'POST',body:fd})).json();removeThink();state=d.state;if(langPref==='auto'&&d.lang)applyLang(d.lang);if(d.texto){bubble('user','🎤 '+d.texto);hist.push({role:'user',content:d.texto});lastP=d.texto}if(d.reply){bubble('bot',d.reply,d.audio);hist.push({role:'assistant',content:d.reply,audio:d.audio});lastR=d.reply}saveConv()};rec.start();mic.classList.add('rec');avisar('🎤 Grabando…')};
+cadd.onclick=async()=>{if(!ctema.value||!cnom.value)return avisar('⚠️ Tema y nombre obligatorios','error');await fetch('/api/cat/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tema:ctema.value,kw:ckw.value,nombre:cnom.value,rol:crol.value,correo:ccor.value,tel:ctel.value,oficina:cof.value,horario:chor.value})});ctema.value=ckw.value=cnom.value=crol.value=ccor.value=ctel.value=cof.value=chor.value='';avisar(' Responsable agregado al catálogo','ok')};
+radd.onclick=async()=>{if(!rnom.value)return avisar('️ Falta nombre','error');await fetch('/api/resp/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nombre:rnom.value,correo:rcor.value,rol:rrol.value,clases:rcla.value})});rnom.value=rcor.value=rrol.value=rcla.value='';loadResp();avisar('👥 Agregado al directorio','ok')};
+mic.onclick=async()=>{if(rec&&rec.state==='recording'){rec.stop();return}const s=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];rec=new MediaRecorder(s);rec.ondataavailable=e=>chunks.push(e.data);rec.onstop=async()=>{s.getTracks().forEach(t=>t.stop());mic.classList.remove('rec');thinking();const fd=new FormData();fd.append('audio',new Blob(chunks,{type:'audio/webm'}),'voz.webm');fd.append('hist',JSON.stringify(hist.slice(-7)));fd.append('state',JSON.stringify(state));fd.append('lang',langPref);fd.append('rol',currentRol);const d=await(await fetch('/api/voice',{method:'POST',body:fd})).json();removeThink();state=d.state;if(langPref==='auto'&&d.lang)applyLang(d.lang);if(d.texto){bubble('user','🎤 '+d.texto);hist.push({role:'user',content:d.texto});lastP=d.texto}if(d.reply){bubble('bot',d.reply,d.audio);hist.push({role:'assistant',content:d.reply,audio:d.audio});lastR=d.reply}saveConv()};rec.start();mic.classList.add('rec');avisar(' Grabando…')};
 gear.onclick=()=>{drawer.style.display=drawer.style.display==='block'?'none':'block'};
 salirp.onclick=()=>{state={pending:false,active:false};drawer.style.display='none';zona.style.display='none'};
 clave.onkeydown=e=>{if(e.key==='Enter')unlock.click()};fdel.onkeydown=e=>{if(e.key==='Enter')bdel.click()};
 unlock.onclick=async()=>{const r=await fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:clave.value})});const d=await r.json();zona.style.display=d.ok?'block':'none';if(d.ok){loadDocs();loadResp();avisar('✅ Panel abierto','ok')}else avisar('❌ Clave','error')};
-fsubir.onclick=async()=>{const f=ffile.files[0]||droppedFile;if(!f&&!ftexto.value.trim())return avisar('⚠️ Elige archivo o texto','error');avisar('⏳ Publicando…');const fd=new FormData();if(f)fd.append('archivo',f);fd.append('categoria',fcat.value);fd.append('vigencia',fvig.value);fd.append('reemplazar','0');fd.append('texto_manual',ftexto.value);fd.append('responsable',fresp.value||currentUser);const d=await(await fetch('/api/upload',{method:'POST',body:fd})).json();fest.innerText=d.estado;avisar(d.estado,d.estado.startsWith('✅')?'ok':'error');loadDocs()};
+fsubir.onclick=async()=>{const f=ffile.files[0]||droppedFile;if(!f&&!ftexto.value.trim())return avisar('️ Elige archivo o texto','error');avisar('⏳ Publicando…');const fd=new FormData();if(f)fd.append('archivo',f);fd.append('categoria',fcat.value);fd.append('vigencia',fvig.value);fd.append('reemplazar','0');fd.append('texto_manual',ftexto.value);fd.append('responsable',fresp.value||currentUser);const d=await(await fetch('/api/upload',{method:'POST',body:fd})).json();fest.innerText=d.estado;avisar(d.estado,d.estado.startsWith('✅')?'ok':'error');loadDocs()};
 ldocs.onclick=loadDocs;async function loadDocs(){const d=await(await fetch('/api/docs')).json();dlist.innerText=(d.docs||[]).join('\\n')||'—'}
 lfb.onclick=async()=>{const d=await(await fetch('/api/feedback/list?clave='+encodeURIComponent(clave.value))).json();fest.innerText=(d.items||[]).join('\\n----------\\n');avisar('📨 Feedbacks','ok')};
 bdel.onclick=async()=>{const d=await(await fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:clave.value,nombre:fdel.value})})).json();fest.innerText=d.estado;avisar(d.estado,'ok');loadDocs()};
 nota.onclick=async()=>{if(rec2&&rec2.state==='recording'){rec2.stop();return}const s=await navigator.mediaDevices.getUserMedia({audio:true});let ch=[];rec2=new MediaRecorder(s);rec2.ondataavailable=e=>ch.push(e.data);rec2.onstop=async()=>{s.getTracks().forEach(t=>t.stop());avisar('⏳ Transcribiendo…');const fd=new FormData();fd.append('audio',new Blob(ch,{type:'audio/webm'}),'nota.webm');fd.append('categoria',fcat.value);fd.append('responsable',fresp.value||currentUser);const d=await(await fetch('/api/voice_note',{method:'POST',body:fd})).json();fest.innerText=d.estado;avisar(d.estado,d.estado.startsWith('✅')?'ok':'error');loadDocs()};rec2.start();avisar('🔴 Grabando…')};
 rep.onclick=async()=>{const d=await(await fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:clave.value})})).json();if(d.error)return avisar(d.error,'error');
 let t='📊 Total: '+d.total+' · Hoy: '+d.hoy+' · Catálogo: '+d.catalogo+'\\n\\n🔥 MÁS PREGUNTADAS:\\n'+d.top.map((x,i)=>(i+1)+'. '+x[0]+' ('+x[1]+')').join('\\n');
-t+='\\n\\n🚩 PENDIENTES (pedir corrección):\\n'+((d.pendientes||[]).map(p=>'• ['+p.area+'] '+p.pregunta+' → '+p.responsable).join('\\n')||'• Sin pendientes 🎉');
-t+='\\n\\n📤 QUIÉN SUBIÓ QUÉ:\\n'+((d.subidas||[]).map(s=>'• '+s.responsable+' → '+s.categoria+' ('+s.archivo+')').join('\\n')||'• —');
+t+='\\n\\n🚩 PENDIENTES (pedir corrección):\\n'+((d.pendientes||[]).map(p=>'• ['+p.area+'] '+p.pregunta+' → '+p.responsable).join('\\n')||'• Sin pendientes ');
+t+='\\n\\n QUIÉN SUBIÓ QUÉ:\\n'+((d.subidas||[]).map(s=>'• '+s.responsable+' → '+s.categoria+' ('+s.archivo+')').join('\\n')||'• —');
 fest.innerText=t;avisar('📊 Reporte listo','ok')};
+scraper.onclick=async()=>{
+    const clave=prompt("🔐 Clave de administrador del scraper:");
+    if(!clave)return;
+    avisar("🕷️ Ejecutando barrido web...");
+    const d=await(await fetch('/api/scraper/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:clave})})).json();
+    if(d.error)return avisar(d.error,'error');
+    const r=d.resultados;
+    let t=' Páginas actualizadas: '+r.paginas_actualizadas.length+'\\n';
+    r.paginas_actualizadas.forEach(p=>t+='  • '+p.nombre+': '+p.caracteres+' chars\\n');
+    t+='\\n🔍 Inconsistencias: '+r.inconsistencias.length+'\\n';
+    r.inconsistencias.forEach(i=>t+='  '+i+'\\n');
+    if(r.errores.length){t+='\\n❌ Errores: '+r.errores.length+'\\n';r.errores.forEach(e=>t+='  '+e+'\\n')}
+    fest.innerText=t;
+    avisar('✅ Barrido completado','ok');
+};
 applyFont();welcome();loadList();refreshWho();inp.focus();
 </script></body></html>
 """
