@@ -8,3 +8,4 @@ edge-tts
 duckduckgo-search
 pypdf
 requests
+beautifulsoup4==4.12.3
