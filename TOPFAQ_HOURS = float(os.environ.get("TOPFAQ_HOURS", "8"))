@@ -23,7 +23,7 @@ GH_TOKEN = os.environ.get("GITHUB_TOKEN", ""); GH_REPO = os.environ.get("GITHUB_
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", ""); GEMINI_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
 GROQ_KEY = os.environ.get("GROQ_API_KEY", ""); OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"; GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-TOPFAQ_HOURS = float(os.environ.get("TOPFAQ_HOURS", "8"))
+TOPFAQ_HOURS = float(os.environ.get("TOPFAQ_HOURS", "48"))
 LOGO = os.path.join(BASE, "logo.png"); LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
 for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK, CAPTURAS): os.makedirs(d, exist_ok=True)
 CATS_INTERNAS = ("clases", "tareas", "internos")
@@ -151,7 +151,7 @@ def respuesta_de_documentos(preg, rol="externo"):
 def sistema_prompt(ctx, rol="externo"):
     extra = " El usuario es comunidad UABC: puedes incluir avisos internos de clases/tareas. " if rol == "interno" else " El usuario es público general: NO reveles info interna de clases/tareas. "
     return (f"Hoy es {fecha_hoy_es()}. Eres UABCBot Idiomas de la Facultad de Idiomas UABC Mexicali. "
-      "Responde en el idioma de la pregunta, conciso. Si preguntan COSTOS da la cifra exacta disponible. "
+      "Responde en el idioma de la pregunta, MÁXIMO 3-4 oraciones. Sé ultra-conciso. Si preguntan COSTOS da la cifra exacta disponible. "
       "NUNCA repitas la pregunta. FECHAS: primero eventos de los próximos 14 días. "
       "REGLAS: responde solo lo preguntado; no copies nombres de archivo ni ===; reformula. "
       "Si un tema tiene responsable, menciónalo para atender directo sin trámites. "
@@ -242,7 +242,10 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     suf={"es":" (Responde en español, conciso.)","en":" (Answer in English, concise.)","fr":" (Réponds en français, concis.)"}[lang]
     pf=pregunta+suf
     hist=[{"role":("user" if m["role"]=="user" else "assistant"),"content":m["content"]} for m in (historial or []) if isinstance(m,dict) and isinstance(m.get("content"),str)]
-    texto=llamar_openai(sp,hist,pf,OR_URL,OR_KEY,["deepseek/deepseek-v4-flash","deepseek/deepseek-chat-v3.1","meta-llama/llama-3.3-70b-instruct:free"])
+    # Primero Groq (gratis), luego Gemini (gratis), último OpenRouter (pago)
+    texto=llamar_openai(sp,hist,pf,GROQ_URL,GROQ_KEY,["llama-3.1-70b-versatile","llama-3.1-8b-instant"])
+    if not _es_valida(texto): texto=llamar_gemini(cliente_gemini,sp,hist,pf)
+    if not _es_valida(texto): texto=llamar_openai(sp,hist,pf,OR_URL,OR_KEY,["deepseek/deepseek-v4-flash"])
     if not _es_valida(texto): texto=llamar_gemini(cliente_gemini,sp,hist,pf)
     if not _es_valida(texto): texto=llamar_gemini(cliente_gemini2,sp,hist,pf)
     if not _es_valida(texto): texto=llamar_openai(sp,hist,pf,GROQ_URL,GROQ_KEY,["llama-3.3-70b-versatile"])
