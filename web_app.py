@@ -643,11 +643,23 @@ let hist=[],state={pending:false,active:false},langPref="auto",rec=null,rec2=nul
 let currentUser=localStorage.getItem('uabc_user')||"",currentRol=localStorage.getItem('uabc_rol')||"externo";
 const chat=document.getElementById('chat'),inp=document.getElementById('inp');
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const B={es:'👋 ¡Hola! Soy <b>UABCBot Idiomas</b> de la Facultad de Idiomas UABC Mexicali. Te atiendo en español, inglés o francés: <b>te leo o te escucho</b>.',en:'👋 Hi! I am <b>UABCBot Idiomas</b>. I serve you in Spanish, English or French: <b>I read you or listen to you</b>.',fr:'👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>. Je t\'aide en espagnol, anglais ou français : <b>je te lis ou je t\'écoute</b>.'};
-const TB={es:'¡Hola! Soy UABCBot Idiomas. Te leo o te escucho en español, inglés o francés.',en:'Hi! I am UABCBot Idiomas. I read you or listen to you.',fr:'Bonjour ! Je suis UABCBot Idiomas. Je te lis ou je t\'écoute.'};
-const N={es:'Docentes: di "administración". Comunidad UABC: regístrate con @uabc.edu.mx. Si algo no te resuelve, toca .',en:'Staff: type "administración". UABC: register with @uabc.edu.mx. If not solved, tap 🚩.',fr:'Personnel : « administración ». UABC : inscris-toi avec @uabc.edu.mx. Sinon, touche .'};
+const B={
+  es:"👋 ¡Hola! Soy <b>UABCBot Idiomas</b> de la Facultad de Idiomas UABC Mexicali. Te atiendo en español, inglés o francés: <b>te leo o te escucho</b>.",
+  en:"👋 Hi! I am <b>UABCBot Idiomas</b>. I serve you in Spanish, English or French: <b>I read you or listen to you</b>.",
+  fr:"👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>. Je t\u0027aide en espagnol, anglais ou français : <b>je te lis ou je t\u0027écoute</b>."
+};
+const TB={
+  es:"¡Hola! Soy UABCBot Idiomas. Te leo o te escucho en español, inglés o francés.",
+  en:"Hi! I am UABCBot Idiomas. I read you or listen to you.",
+  fr:"Bonjour ! Je suis UABCBot Idiomas. Je te lis ou je t\u0027écoute."
+};
+const N={
+  es:"Docentes: di administración. Comunidad UABC: regístrate con @uabc.edu.mx. Si algo no te resuelve, toca 🚩.",
+  en:"Staff: type administración. UABC: register with @uabc.edu.mx. If not solved, tap 🚩.",
+  fr:"Personnel : dis administración. UABC : inscris-toi avec @uabc.edu.mx. Sinon, touche 🚩."
+};
 const G={es:'👋 Invitado: sin memoria. Regístrate con 👤.',en:'👋 Guest: no memory. Register with 👤.',fr:'👋 Invité : pas de mémoire.'};
-const UI={es:{sub:"Facultad de Idiomas de la UABC en Mexicali",side:"🗂️ Conversaciones",new:"➕ Nueva conversación",ph:"Escribe o dime tu pregunta…",ut:" Tu cuenta",reg:"✨ Registrarme",log:"🔑 Entrar",gue:"👋 Invitado",out:"🚪 Cerrar sesión",co:"Correo (@uabc.edu.mx si eres UABC)",cl:"Clave"},en:{sub:"Faculty of Languages of UABC in Mexicali",side:"🗂️ Conversations",new:"➕ New conversation",ph:"Type or say your question…",ut:"👤 Your account",reg:"✨ Register",log:"🔑 Sign in",gue:"👋 Guest",out:"🚪 Sign out",co:"Email (@uabc.edu.mx if UABC)",cl:"Password"},fr:{sub:"Faculté de Langues de l'UABC à Mexicali",side:"️ Conversations",new:"➕ Nouvelle conversation",ph:"Écris ou dis ta question…",ut:"👤 Ton compte",reg:"✨ M'inscrire",log:"🔑 Entrer",gue:"👋 Invité",out:"🚪 Sortir",co:"Courriel (@uabc.edu.mx)",cl:"Mot de passe"}};
+fr:{sub:"Faculté de Langues de l\u0027UABC à Mexicali",side:"Conversations",new:"Nouvelle conversation",ph:"Écris ou dis ta question…",ut:"Ton compte",reg:"M\u0027inscrire",log:"Entrer",gue:"Invité",out:"Sortir",co:"Courriel (@uabc.edu.mx)",cl:"Mot de passe"}
 const WHO={es:{i:' · ✅ comunidad UABC',e:' · público',g:'👋 Invitado: sin memoria.'},en:{i:' · ✅ UABC community',e:' · public',g:'👋 Guest: no memory.'},fr:{i:' · ✅ communauté UABC',e:' · public',g:'👋 Invité.'}};
 const OB={"¿Cuántos créditos necesito para titularme en Traducción?":{es:"💳 Créditos",en:"💳 Credits",fr:"💳 Crédits"},"¿Cuánto cuesta inscribirme a las clases de inglés?":{es:"💰 Costo inglés",en:"💰 English cost",fr:"💰 Coût"},"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?":{es:"🎓 Admisión",en:"🎓 Admission",fr:"🎓 Admission"},"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?":{es:"🏛️ Carreras",en:"🏛️ Degrees",fr:"🏛️ Licences"}};
 function uid(){return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
