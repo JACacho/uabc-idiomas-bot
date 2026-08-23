@@ -1,443 +1,3 @@
-import os
-import re
-import uuid
-import json
-import base64
-import asyncio
-import hashlib
-import secrets
-import requests as http_requests
-from datetime import datetime
-from collections import Counter
-from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-import uvicorn
-import sistema as _sist
-from sistema import responder, transcribir, generar_voz
-
-BASE = os.path.dirname(os.path.abspath(__file__))
-CARPETA = os.path.join(BASE, "datos_bot")
-AUDIOS = os.path.join(BASE, "audios")
-IMGS = os.path.join(BASE, "posters")
-CONVS = os.path.join(BASE, "conversaciones")
-FEEDBACK = os.path.join(BASE, "feedback")
-CONTADOR = os.path.join(BASE, "conteo.txt")
-USO = os.path.join(BASE, "uso.jsonl")
-USERS = os.path.join(BASE, "users.json")
-SESSIONS = os.path.join(BASE, "sessions.json")
-CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "fimxl2026")
-GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-GH_REPO = os.environ.get("GITHUB_REPO", "")
-LOGO = os.path.join(BASE, "logo.png")
-LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
-for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK):
-    os.makedirs(d, exist_ok=True)
-
-AREAS_RESP = {
-    "Admisión": "admision.mxl@uabc.edu.mx",
-    "CEC": "recepcionmxl@uabc.edu.mx",
-    "Escolar/Escolaridad": "escolares_idiomas_mxl@uabc.edu.mx",
-    "Egresados/Bolsa de trabajo": "egresados__idiomas__mxl@uabc.edu.mx",
-    "Eventos": "idiomas.mxl@uabc.edu.mx",
-    "Otro": "idiomas.mxl@uabc.edu.mx",
-}
-
-try:
-    if not os.path.exists(LOGO):
-        r = http_requests.get(LOGO_URL, timeout=10)
-        if r.status_code == 200 and r.content:
-            with open(LOGO, "wb") as f:
-                f.write(r.content)
-except Exception:
-    pass
-
-app = FastAPI()
-
-FAQ = [
-    (["credito", "titular", "titul"], "¿Cuántos créditos necesito para titularme en Traducción?"),
-    (["horario", "cec"], "¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?"),
-    (["admision", "requisito", "inscri"], "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?"),
-    (["carrera", "tsu", "tecnico", "técnico"], "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?"),
-]
-
-EXT_IMG = (".png", ".jpg", ".jpeg", ".webp")
-
-def _jload(p, d={}):
-    try:
-        with open(p, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return d
-
-def _jdump(p, d):
-    try:
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False)
-    except Exception:
-        pass
-
-def _hash(clave, salt):
-    return hashlib.sha256((salt + clave).encode("utf-8")).hexdigest()
-
-def normalizar_faq(texto):
-    t = (texto or "").lower()
-    for claves, canonica in FAQ:
-        if any(k in t for k in claves) and len(t) < 90:
-            return canonica
-    return texto or ""
-
-def limpiar_tags(texto):
-    return re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto or "").strip()
-
-def github_subir(ruta_repo, contenido_bytes):
-    if not GH_TOKEN or not GH_REPO:
-        return "(sin respaldo GitHub)"
-    try:
-        url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
-        headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
-        r = http_requests.get(url, headers=headers, timeout=15)
-        data = {"message": f"bot: actualiza {ruta_repo}", "content": base64.b64encode(contenido_bytes).decode()}
-        if r.status_code == 200 and r.json().get("sha"):
-            data["sha"] = r.json()["sha"]
-        q = http_requests.put(url, json=data, headers=headers, timeout=25)
-        return "☁️ Respaldo permanente en GitHub listo." if q.status_code in (200, 201) else "⚠️ No se pudo respaldar en GitHub."
-    except Exception:
-        return "⚠️ No se pudo respaldar en GitHub."
-
-def github_borrar(ruta_repo):
-    if not GH_TOKEN or not GH_REPO:
-        return ""
-    try:
-        url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
-        headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
-        r = http_requests.get(url, headers=headers, timeout=15)
-        if r.status_code == 200 and r.json().get("sha"):
-            http_requests.delete(url, json={"message": f"bot: borra {ruta_repo}", "sha": r.json()["sha"]}, headers=headers, timeout=25)
-    except Exception:
-        pass
-
-def log_uso(texto, lang, via):
-    try:
-        with open(USO, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"ts": datetime.now().isoformat(), "texto": texto, "lang": lang, "via": via}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-def leer_uso():
-    try:
-        with open(USO, encoding="utf-8") as f:
-            return [json.loads(l) for l in f if l.strip()]
-    except Exception:
-        return []
-
-def guardar_aviso(texto, categoria="Avisos"):
-    nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + categoria + ".txt"
-    cab = f"=== {categoria} | Subido: {datetime.now().strftime('%d/%m/%Y')} | Vigente hasta: sin límite ===\n"
-    contenido = cab + texto
-    with open(os.path.join(CARPETA, nuevo), "w", encoding="utf-8") as f:
-        f.write(contenido)
-    return nuevo, github_subir(f"datos_bot/{nuevo}", contenido.encode("utf-8"))
-
-def extraer_texto(ruta, nombre):
-    if nombre.lower().endswith(".pdf"):
-        from pypdf import PdfReader
-        lector = PdfReader(ruta)
-        return "\n".join((p.extract_text() or "") for p in lector.pages)
-    with open(ruta, encoding="utf-8", errors="ignore") as f:
-        return f.read()
-
-def router(msg, hist, state, lang_pref):
-    state = state or {"pending": False, "active": False}
-    texto = (msg or "").strip()
-    if state.get("pending"):
-        state["pending"] = False
-        if texto == CLAVE_ADMIN:
-            state["active"] = True
-            return "✅ Acceso concedido, profe. Escribe tu aviso tal cual (o usa el panel ⚙️ para documentos, pósters y notas de voz). Escribe SALIR para cerrar.", None, state
-        return "❌ Clave incorrecta.", None, state
-    if state.get("active"):
-        if texto.upper() == "SALIR":
-            state["active"] = False
-            return "🔒 Sesión de administración cerrada. Vuelvo a modo aspirante.", None, state
-        nuevo, resp = guardar_aviso(texto)
-        return f"✅ Publicado y aprendido al instante. {resp}", None, state
-    if "administraci" in texto.lower():
-        state["pending"] = True
-        return "🔐 Para entrar al modo de administración, escribe la clave de acceso.", None, state
-    pregunta = normalizar_faq(texto)
-    suf = {"es": "\n(Responde en español.)", "en": "\n(Answer in English.)", "fr": "\n(Réponds en français.)"}.get(lang_pref, "")
-    try:
-        respuesta, lang = responder(pregunta + suf, hist or [])
-    except Exception:
-        respuesta, lang = responder(pregunta, [])
-    respuesta = limpiar_tags(respuesta)
-    return respuesta, lang if lang_pref == "auto" else lang_pref, state
-
-async def producir_audio(respuesta, lang):
-    try:
-        ruta = await generar_voz(respuesta, lang or "es")
-        if ruta and os.path.exists(ruta):
-            nombre = str(uuid.uuid4()) + ".mp3"
-            destino = os.path.join(AUDIOS, nombre)
-            with open(ruta, "rb") as o, open(destino, "wb") as d:
-                d.write(o.read())
-            return "/audio/" + nombre
-    except Exception:
-        pass
-    return None
-
-@app.post("/api/register")
-async def api_register(req: Request):
-    d = await req.json()
-    u = (d.get("usuario") or "").strip().lower()
-    c = d.get("clave") or ""
-    if len(u) < 3 or len(c) < 4:
-        return {"ok": False, "error": "Usuario ≥ 3 y clave ≥ 4 caracteres."}
-    users = _jload(USERS, {})
-    if u in users:
-        return {"ok": False, "error": "Ese usuario ya existe; inicia sesión."}
-    salt = secrets.token_hex(8)
-    users[u] = {"salt": salt, "hash": _hash(c, salt)}
-    _jdump(USERS, users)
-    return {"ok": True, "usuario": u}
-
-@app.post("/api/login")
-async def api_login(req: Request):
-    d = await req.json()
-    u = (d.get("usuario") or "").strip().lower()
-    c = d.get("clave") or ""
-    users = _jload(USERS, {})
-    rec = users.get(u)
-    if not rec or rec["hash"] != _hash(c, rec["salt"]):
-        return {"ok": False, "error": "Usuario o clave incorrectos."}
-    return {"ok": True, "usuario": u}
-
-@app.post("/api/chat")
-async def api_chat(req: Request):
-    d = await req.json()
-    st = d.get("state") or {}
-    if not (st.get("active") or st.get("pending")):
-        log_uso(d.get("msg", ""), d.get("lang", "auto"), "texto")
-    try:
-        respuesta, lang, state = router(d.get("msg"), d.get("hist"), st, d.get("lang", "auto"))
-        audio = await producir_audio(respuesta, lang)
-    except Exception as e:
-        respuesta = f"⚠️ Error interno: {type(e).__name__}: {e}"
-        audio = None
-        state = st
-    return {"reply": respuesta, "audio": audio, "state": state}
-
-@app.post("/api/voice")
-async def api_voice(audio: UploadFile = File(...), hist: str = Form("[]"), state: str = Form("{}"), lang: str = Form("auto")):
-    data = await audio.read()
-    texto, _ = transcribir(data)
-    if not texto:
-        return {"texto": "", "reply": "⚠️ No logré escuchar bien. Intenta de nuevo más cerca del micrófono.", "audio": None, "state": state}
-    st = json.loads(state)
-    if not (st.get("active") or st.get("pending")):
-        log_uso(texto, lang, "voz")
-    respuesta, lang2, state2 = router(texto, json.loads(hist), st, lang)
-    aud = await producir_audio(respuesta, lang2)
-    return {"texto": texto, "reply": respuesta, "audio": aud, "state": state2}
-
-@app.post("/api/voice_note")
-async def voice_note(audio: UploadFile = File(...), categoria: str = Form("Avisos")):
-    data = await audio.read()
-    texto, _ = transcribir(data)
-    if not texto:
-        return {"estado": "⚠️ No logré escuchar la nota."}
-    nuevo, resp = guardar_aviso(texto, categoria)
-    return {"estado": f"✅ Nota de voz publicada: {nuevo}. {resp}"}
-
-@app.post("/api/unlock")
-async def api_unlock(req: Request):
-    d = await req.json()
-    return {"ok": d.get("clave") == CLAVE_ADMIN}
-
-@app.post("/api/report")
-async def report(req: Request):
-    d = await req.json()
-    if d.get("clave") != CLAVE_ADMIN:
-        return {"error": "❌ Clave incorrecta"}
-    lines = leer_uso()
-    hoy = datetime.now().strftime("%Y-%m-%d")
-    c = Counter(normalizar_faq(l["texto"]) for l in lines if l.get("texto"))
-    idi = Counter(l.get("lang", "auto") for l in lines)
-    return {
-        "total": len(lines),
-        "hoy": sum(1 for l in lines if l.get("ts", "").startswith(hoy)),
-        "top": c.most_common(10),
-        "idiomas": dict(idi),
-    }
-
-@app.get("/api/topfaq")
-async def topfaq():
-    c = Counter(normalizar_faq(l["texto"]) for l in leer_uso() if l.get("texto"))
-    return [{"q": q, "n": n} for q, n in c.most_common(4)]
-
-@app.post("/api/feedback")
-async def api_feedback(req: Request):
-    d = await req.json()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    area = d.get("area", "Otro")
-    contenido = (
-        f"=== Feedback {ts} | Área: {area} | Reenviar a: {AREAS_RESP.get(area, AREAS_RESP['Otro'])} ===\n"
-        f"PREGUNTA DEL USUARIO: {d.get('pregunta','')}\n"
-        f"RESPUESTA DEL BOT: {d.get('respuesta','')}\n"
-        f"COMENTARIO: {d.get('comentario','')}\n"
-    )
-    with open(os.path.join(FEEDBACK, ts + ".txt"), "w", encoding="utf-8") as f:
-        f.write(contenido)
-    github_subir(f"feedback/{ts}.txt", contenido.encode("utf-8"))
-    return {"ok": True}
-
-@app.get("/api/feedback/list")
-async def api_feedback_list(clave: str = ""):
-    if clave != CLAVE_ADMIN:
-        return {"items": ["❌ Clave incorrecta"]}
-    out = []
-    for fn in sorted(os.listdir(FEEDBACK), reverse=True)[:10]:
-        try:
-            with open(os.path.join(FEEDBACK, fn), encoding="utf-8") as f:
-                out.append(f.read())
-        except Exception:
-            pass
-    return {"items": out or ["Sin feedbacks aún. 🎉"]}
-
-@app.post("/api/upload")
-async def api_upload(archivo: UploadFile = File(None), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("0"), texto_manual: str = Form("")):
-    texto = texto_manual.strip()
-    if archivo is not None:
-        nombre_orig = archivo.filename or "doc.txt"
-        ext = os.path.splitext(nombre_orig)[1].lower()
-        data = await archivo.read()
-    else:
-        nombre_orig = "nota_manual.txt"
-        ext = ".txt"
-        data = b""
-    if ext in EXT_IMG:
-        mime = "image/png" if ext == ".png" else "image/jpeg"
-        if not texto:
-            texto, err_vis = _sist.extraer_imagen(data, mime)
-        else:
-            err_vis = ""
-        if not texto:
-            return {"estado": f"⚠️ Visión no disponible ahora ({err_vis}). Pega el texto del póster en el cuadro 📝 y pulsa Subir: se publica al instante."}
-        iname = str(uuid.uuid4()) + ext
-        with open(os.path.join(IMGS, iname), "wb") as f:
-            f.write(data)
-        texto = texto + f"\n🖼️ Póster original: /img/{iname}"
-    elif data:
-        tmp = os.path.join(BASE, "tmp_" + nombre_orig)
-        with open(tmp, "wb") as f:
-            f.write(data)
-        texto = extraer_texto(tmp, nombre_orig) or texto
-        os.remove(tmp)
-    if not texto:
-        return {"estado": "⚠️ Elige un archivo o pega el texto del aviso en el cuadro 📝."}
-    if reemplazar == "1":
-        for fn in list(os.listdir(CARPETA)):
-            if fn.endswith(f"_{categoria}.txt"):
-                os.remove(os.path.join(CARPETA, fn))
-                github_borrar(f"datos_bot/{fn}")
-    nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + categoria + ".txt"
-    cab = f"=== {categoria} | Subido: {datetime.now().strftime('%d/%m/%Y')} | Vigente hasta: {vigencia or 'sin límite'} ===\n"
-    with open(os.path.join(CARPETA, nuevo), "w", encoding="utf-8") as f:
-        f.write(cab + texto)
-    resp = github_subir(f"datos_bot/{nuevo}", (cab + texto).encode("utf-8"))
-    return {"estado": f"✅ Guardado como {nuevo}. {resp}"}
-
-@app.post("/api/delete")
-async def api_delete(req: Request):
-    d = await req.json()
-    if d.get("clave") != CLAVE_ADMIN:
-        return {"estado": "❌ Clave incorrecta"}
-    nombre = (d.get("nombre") or "").strip()
-    ruta = os.path.join(CARPETA, nombre)
-    if os.path.exists(ruta):
-        os.remove(ruta)
-        github_borrar(f"datos_bot/{nombre}")
-        return {"estado": f"🗑️ {nombre} eliminado (también del respaldo)."}
-    return {"estado": "No encontrado."}
-
-@app.get("/api/docs")
-async def api_docs():
-    archivos = [f for f in sorted(os.listdir(CARPETA)) if f.endswith(".txt")]
-    return {"docs": archivos}
-
-@app.get("/api/cache/clear")
-async def cache_clear(clave: str = ""):
-    if clave != CLAVE_ADMIN:
-        return {"ok": False}
-    try:
-        os.remove(os.path.join(BASE, "cache.json"))
-    except Exception:
-        pass
-    return {"ok": True}
-
-@app.get("/api/debug")
-async def api_debug():
-    out = {"gemini": bool(_sist.cliente_gemini), "groq": bool(_sist.GROQ_KEY), "openrouter": bool(_sist.OR_KEY)}
-    try:
-        t, l = _sist.responder("Di solo la palabra: listo", [])
-        out["respuesta"] = t[:100]
-    except Exception as e:
-        out["error_texto"] = f"{type(e).__name__}: {e}"
-    return out
-
-@app.get("/api/debug_vision")
-async def api_debug_vision():
-    return _sist.probar_vision()
-
-@app.post("/api/conv/save")
-async def conv_save(req: Request):
-    d = await req.json()
-    cid = re.sub(r"[^a-zA-Z0-9_-]", "", d.get("id", ""))[:40] or "c"
-    with open(os.path.join(CONVS, cid + ".json"), "w", encoding="utf-8") as f:
-        json.dump({"id": cid, "user": d.get("user", ""), "titulo": d.get("titulo", "Conversación"), "fecha": datetime.now().isoformat(), "msgs": d.get("msgs", [])}, f, ensure_ascii=False)
-    return {"ok": True}
-
-@app.get("/api/conv/list")
-async def conv_list(user: str = ""):
-    out = []
-    for fn in os.listdir(CONVS):
-        if fn.endswith(".json"):
-            try:
-                with open(os.path.join(CONVS, fn), encoding="utf-8") as f:
-                    d = json.load(f)
-                if user and d.get("user") != user:
-                    continue
-                out.append({"id": d["id"], "titulo": d.get("titulo", "Conversación"), "fecha": d.get("fecha", "")})
-            except Exception:
-                pass
-    out.sort(key=lambda x: x["fecha"], reverse=True)
-    return out[:30]
-
-@app.get("/api/conv/get")
-async def conv_get(id: str = ""):
-    cid = re.sub(r"[^a-zA-Z0-9_-]", "", id)[:40]
-    p = os.path.join(CONVS, cid + ".json")
-    if os.path.exists(p):
-        with open(p, encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-@app.get("/audio/{nombre}")
-async def audio(nombre: str):
-    return FileResponse(os.path.join(AUDIOS, nombre), media_type="audio/mpeg")
-
-@app.get("/img/{nombre}")
-async def img(nombre: str):
-    p = os.path.join(IMGS, nombre)
-    mt = "image/png" if nombre.endswith(".png") else "image/jpeg"
-    return FileResponse(p, media_type=mt)
-
-@app.get("/logo.png")
-async def logo():
-    if os.path.exists(LOGO):
-        return FileResponse(LOGO)
-    return JSONResponse({})
-
 PAGINA = """
 <!DOCTYPE html>
 <html lang="es">
@@ -449,25 +9,28 @@ PAGINA = """
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
   #toast { display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); color: #fff; padding: 13px 22px; border-radius: 14px; font-size: 14.5px; z-index: 99; box-shadow: 0 4px 16px rgba(0,0,0,.35); max-width: 92%; text-align: center; }
-  .wrap { max-width: 1200px; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
-  #side { width: 260px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .wrap { max-width: 1400px; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
+  #side { width: 280px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
   #side b { font-size: 14px; }
   #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; }
   #side button:hover { background: rgba(255,255,255,.25); }
   main { flex: 1; display: flex; flex-direction: column; height: 100vh; }
-  header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); flex-wrap: wrap; }
   header img { width: 54px; height: 54px; background: #fff; border-radius: 12px; padding: 3px; }
   header h1 { font-size: 17px; } header p { font-size: 12px; opacity: .85; }
-  .langs { display: flex; gap: 5px; margin-left: 14px; }
+  .langs { display: flex; gap: 5px; margin-left: 14px; flex-wrap: wrap; }
   .langs button { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: transparent; color: #fff; cursor: pointer; }
   .langs button.on { background: #f7941d; border-color: #f7941d; font-weight: 700; }
+  .utils { display: flex; gap: 5px; margin-left: auto; }
+  .utils button { font-size: 14px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.15); color: #fff; cursor: pointer; }
+  .utils button:hover { background: rgba(255,255,255,.3); }
   .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; }
   #nuevo { margin-left: auto; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
   .msg.user { align-self: flex-end; align-items: flex-end; }
   .msg.bot { align-self: flex-start; align-items: flex-start; }
-  .bub { padding: 10px 14px; border-radius: 16px; font-size: 14.5px; line-height: 1.45; box-shadow: 0 1px 2px rgba(0,0,0,.12); white-space: pre-wrap; }
+  .bub { padding: 10px 14px; border-radius: 16px; font-size: calc(14.5px * var(--fs, 1)); line-height: 1.45; box-shadow: 0 1px 2px rgba(0,0,0,.12); white-space: pre-wrap; }
   .user .bub { background: #d9f6c8; border-bottom-right-radius: 4px; }
   .bot .bub { background: #fff; border-bottom-left-radius: 4px; }
   .msg audio { width: 260px; max-width: 100%; }
@@ -475,14 +38,14 @@ PAGINA = """
   .dots::after { content: ''; animation: pts 1.2s steps(4) infinite; }
   @keyframes pts { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
   .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .opts button { font-size: 12.5px; padding: 7px 11px; border-radius: 999px; border: 1px solid #00855f; background: #f2fbf6; color: #00684a; cursor: pointer; }
+  .opts button { font-size: calc(12.5px * var(--fs, 1)); padding: 7px 11px; border-radius: 999px; border: 1px solid #00855f; background: #f2fbf6; color: #00684a; cursor: pointer; }
   .opts button:hover { background: #00855f; color: #fff; }
-  .nota { display: block; margin-top: 9px; font-size: 12px; color: #888; }
+  .nota { display: block; margin-top: 9px; font-size: calc(12px * var(--fs, 1)); color: #888; }
   .bar { display: flex; gap: 8px; padding: 10px 12px 14px; align-items: center; }
   #mic { width: 46px; height: 46px; border-radius: 50%; border: none; background: #00684a; color: #fff; font-size: 19px; cursor: pointer; flex-shrink: 0; }
   #mic.rec { background: #d32f2f; animation: pulso 1s infinite; }
   @keyframes pulso { 50% { transform: scale(1.12); } }
-  #inp { flex: 1; border: 1px solid #cfd8dc; border-radius: 999px; padding: 12px 18px; font-size: 15px; outline: none; }
+  #inp { flex: 1; border: 1px solid #cfd8dc; border-radius: 999px; padding: 12px 18px; font-size: calc(15px * var(--fs, 1)); outline: none; }
   #inp:focus { border-color: #00855f; }
   #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: #f7941d; color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; }
   #fb { width: 46px; height: 46px; border-radius: 50%; border: none; background: #d32f2f; color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; }
@@ -499,10 +62,10 @@ PAGINA = """
   .ayuda { font-size: 11.5px; color: #667; margin-bottom: 4px; }
   @media (max-width: 900px) { #side { display: none; } #convs { display: block; } }
   @media (min-width: 900px) {
-    .bub { font-size: 16.5px; }
+    .bub { font-size: calc(16.5px * var(--fs, 1)); }
     header h1 { font-size: 21px; }
     header p { font-size: 13px; }
-    #inp { font-size: 17px; padding: 14px 22px; }
+    #inp { font-size: calc(17px * var(--fs, 1)); padding: 14px 22px; }
     .msg { max-width: 70%; }
   }
 </style>
@@ -522,14 +85,19 @@ PAGINA = """
       <div class="langs">
         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
       </div>
+      <div class="utils">
+        <button id="fmenos" title="Reducir letra">A−</button>
+        <button id="fmas" title="Aumentar letra">A+</button>
+        <button id="full" title="Pantalla completa">⛶</button>
+      </div>
       <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
       <button id="user" class="hbtn" title="Tu cuenta">👤</button>
       <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
     </header>
     <button id="gear" title="Personal autorizado">⚙️</button>
-    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
-    <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
-      <b>👤 Tu cuenta</b>
+    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b>️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'"> Cerrar</button>
+      <b> Tu cuenta</b>
       <div id="who"></div>
       <input id="uusr" placeholder="Usuario o correo">
       <input id="ukey" type="password" placeholder="Clave">
@@ -564,16 +132,16 @@ PAGINA = """
         <span class="etiq">3️⃣ Elige o arrastra el archivo (TXT, PDF o imagen)</span>
         <div id="drop">📥 Arrastra aquí tu documento o póster<br><small>o toca para elegirlo</small></div>
         <input id="ffile" type="file" style="display:none">
-        <span class="etiq">📝 Texto del póster (plan B recomendado para imágenes)</span>
+        <span class="etiq"> Texto del póster (plan B recomendado para imágenes)</span>
         <div class="ayuda">Si subes una IMAGEN y el motor de visión está saturado, copia y pega aquí lo que dice el póster (evento, fecha, hora, lugar) y se publicará al instante sin esperar.</div>
         <textarea id="ftexto" rows="4" placeholder="Ejemplo: Plática para Potenciales a Egresar. Martes 18 de agosto, 12:00 y 16:00 hrs, Sala de Usos Múltiples. Informes: Mtra. Dulce Rodríguez, egresados__idiomas__mxl@uabc.edu.mx"></textarea>
-        <button id="fsubir">📤 Subir y publicar</button>
+        <button id="fsubir"> Subir y publicar</button>
         <button id="nota">🎤 Grabar nota de voz</button>
         <button id="ldocs">🔄 Ver documentos</button>
         <button id="lfb">📨 Ver feedbacks</button>
         <button id="rep">📊 Reporte de uso</button>
         <div id="dlist"></div>
-        <span class="etiq">🗑️ Borrar un documento</span>
+        <span class="etiq">️ Borrar un documento</span>
         <input id="fdel" placeholder="Nombre del documento a borrar (Enter borra)">
         <button id="bdel">🗑️ Borrar</button>
         <div id="fest"></div>
@@ -582,13 +150,13 @@ PAGINA = """
     <div class="bar">
       <button id="mic">🎤</button>
       <input id="inp" placeholder="Escribe o dime tu pregunta…">
-      <button id="send">➤</button>
+      <button id="send"></button>
       <button id="fb" title="¿No te resolvió? Repórtalo">🚩</button>
     </div>
   </main>
 </div>
 <script>
-let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null, lastPregunta = "", lastRespuesta = "";
+let hist = [], state = {pending:false, active:false}, langPref = "auto", rec = null, rec2 = null, chunks = [], currentId = uid(), droppedFile = null, thinkTimer = null, thinkSec = 0, toastTimer = null, lastPregunta = "", lastRespuesta = "", fontScale = 1;
 let currentUser = localStorage.getItem('uabc_user') || "";
 const chat = document.getElementById('chat'), inp = document.getElementById('inp');
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -608,25 +176,76 @@ function bubble(role, text, audio){
   d.innerHTML = h; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
   return d;
 }
+
+// TEXTOS MULTILINGÜES
+const TEXTOS = {
+  es: {
+    bienvenida: "👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.",
+    nota: "Personal docente: escribe o di \"administración\". Si una respuesta no te resuelve, toca 🚩.",
+    sugerencias: [
+      {q: "¿Cuántos créditos necesito para titularme en Traducción?", t: "💳 Créditos para titularme"},
+      {q: "¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t: "📅 Horarios del CEC"},
+      {q: "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t: "🎓 Requisitos de admisión"},
+      {q: "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t: "🏛️ Carreras y TSU"}
+    ]
+  },
+  en: {
+    bienvenida: " Hi! I'm <b>UABCBot Idiomas</b>, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
+    nota: "Teaching staff: type or say \"administración\". If an answer doesn't solve your question, tap 🚩.",
+    sugerencias: [
+      {q: "How many credits do I need to graduate from Translation?", t: "💳 Credits to graduate"},
+      {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "📅 CEC schedules"},
+      {q: "What are the admission requirements for the Faculty of Languages?", t: "🎓 Admission requirements"},
+      {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "🏛️ Degrees and TSU"}
+    ]
+  },
+  fr: {
+    bienvenida: "👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>, l'assistant de la Faculté de Langues de l'UABC à Mexicali. Touchez une option ou écrivez/dites-moi votre question en espagnol, anglais ou français.",
+    nota: "Personnel enseignant : écrivez ou dites \"administración\". Si une réponse ne vous aide pas, touchez 🚩.",
+    sugerencias: [
+      {q: "Combien de crédits faut-il pour obtenir son diplôme en Traduction ?", t: "💳 Crédits pour diplômer"},
+      {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC) ?", t: "📅 Horaires du CEC"},
+      {q: "Quelles sont les conditions d'admission à la Faculté de Langues ?", t: " Conditions d'admission"},
+      {q: "Quelles licences et programmes techniques offre la Faculté de Langues ?", t: "🏛️ Licences et TSU"}
+    ]
+  }
+};
+
 async function welcome(){
-  let opts = [
-    {q:"¿Cuántos créditos necesito para titularme en Traducción?", t:"💳 Créditos para titularme"},
-    {q:"¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t:"📅 Horarios del CEC"},
-    {q:"¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t:"🎓 Requisitos de admisión"},
-    {q:"¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t:"🏛️ Carreras y TSU"}
-  ];
+  const L = langPref === 'auto' ? 'es' : langPref;
+  const t = TEXTOS[L] || TEXTOS.es;
+  
+  // Obtener FAQs dinámicas si existen
+  let opts = t.sugerencias;
   try {
     const d = await (await fetch('/api/topfaq')).json();
-    if (d && d.length) opts = d.map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+    if (d && d.length) {
+      opts = d.map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+    }
   } catch(e) {}
+  
   const d = document.createElement('div'); d.className = 'msg bot';
-  d.innerHTML = '<div class="bub">👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.<div class="opts">'
+  d.innerHTML = '<div class="bub">' + t.bienvenida + '<div class="opts">'
     + opts.map(o => '<button data-q="' + esc(o.q) + '">' + esc(o.t) + '</button>').join('')
-    + '</div><span class="nota">Personal docente: escribe o di "administración". Si una respuesta no te resuelve, toca 🚩.</span></div>';
+    + '</div><span class="nota">' + t.nota + '</span></div>';
   chat.appendChild(d);
   d.querySelectorAll('[data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
+  
+  // Reproducir audio de bienvenida
+  try {
+    const audioResp = await fetch('/api/tts?lang=' + L + '&texto=' + encodeURIComponent(t.bienvenida.replace(/<[^>]*>/g, '')));
+    const audioData = await audioResp.json();
+    if (audioData.url) {
+      const au = document.createElement('audio');
+      au.controls = true;
+      au.src = audioData.url;
+      d.querySelector('.bub').appendChild(au);
+    }
+  } catch(e) {}
+  
   chat.scrollTop = chat.scrollHeight;
 }
+
 function thinking(){
   removeThink();
   const d = document.createElement('div'); d.className = 'msg bot think'; d.id = 'think';
@@ -649,7 +268,7 @@ function saveConv(){
 }
 async function loadList(){
   if (!currentUser) {
-    const msg = '<small>👋 Invitado: sin memoria. Regístrate con 👤 para guardar tus conversaciones.</small>';
+    const msg = '<small>👋 Invitado: sin memoria. Regístrate con  para guardar tus conversaciones.</small>';
     document.getElementById('lista').innerHTML = msg;
     document.getElementById('lista2').innerHTML = msg;
     return;
@@ -692,6 +311,16 @@ async function loadDocs(){
   const d = await (await fetch('/api/docs')).json();
   document.getElementById('dlist').innerText = (d.docs || []).join('\\n') || 'Sin documentos.';
 }
+
+// CAMBIO DE IDIOMA
+function applyLang(newLang){
+  langPref = newLang;
+  document.querySelectorAll('.langs button').forEach(b => b.classList.remove('on'));
+  document.getElementById('L' + (newLang === 'auto' ? 'auto' : newLang)).classList.add('on');
+  chat.innerHTML = '';
+  welcome();
+}
+
 document.getElementById('send').onclick = () => send(inp.value);
 inp.onkeydown = e => { if (e.key === 'Enter') send(inp.value); };
 document.getElementById('nuevo').onclick = nueva;
@@ -699,7 +328,7 @@ document.getElementById('nueva').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
 document.getElementById('fb').onclick = () => {
-  if (!lastRespuesta) { avisar('⚠️ Aún no hay respuestas que reportar.', 'error'); return; }
+  if (!lastRespuesta) { avisar('️ Aún no hay respuestas que reportar.', 'error'); return; }
   const d = document.getElementById('fbdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block';
 };
 document.getElementById('fbsend').onclick = async () => {
@@ -724,9 +353,33 @@ document.getElementById('ulin').onclick = async () => {
 };
 document.getElementById('uguest').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
 document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
-[['Lauto','auto'],['Les','es'],['Len','en'],['Lfr','fr']].forEach(([id, v]) => {
-  document.getElementById(id).onclick = e => { langPref = v; document.querySelectorAll('.langs button').forEach(x => x.classList.remove('on')); e.target.classList.add('on'); };
+
+// BOTONES DE IDIOMA
+[['auto','auto'],['es','es'],['en','en'],['fr','fr']].forEach(([id, val]) => {
+  document.getElementById('L' + id).onclick = () => applyLang(val);
 });
+
+// TAMAÑO DE LETRA
+document.getElementById('fmas').onclick = () => {
+  fontScale = Math.min(2.0, fontScale + 0.1);
+  document.documentElement.style.setProperty('--fs', fontScale);
+  avisar(' Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
+};
+document.getElementById('fmenos').onclick = () => {
+  fontScale = Math.max(0.8, fontScale - 0.1);
+  document.documentElement.style.setProperty('--fs', fontScale);
+  avisar('🔍 Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
+};
+
+// PANTALLA COMPLETA
+document.getElementById('full').onclick = () => {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen();
+  } else {
+    document.exitFullscreen();
+  }
+};
+
 const drop = document.getElementById('drop');
 function marcarArchivo(f){
   droppedFile = f;
@@ -774,7 +427,7 @@ document.getElementById('unlock').onclick = async () => {
 document.getElementById('fsubir').onclick = async () => {
   const f = document.getElementById('ffile').files[0] || droppedFile;
   if (!f && !document.getElementById('ftexto').value.trim()) { avisar('⚠️ Elige un archivo o pega el texto del aviso en el cuadro 📝.', 'error'); return; }
-  avisar('⏳ Procesando y publicando… puede tardar unos segundos.');
+  avisar(' Procesando y publicando… puede tardar unos segundos.');
   const fd = new FormData();
   if (f) fd.append('archivo', f);
   fd.append('categoria', document.getElementById('fcat').value);
@@ -829,10 +482,3 @@ welcome(); loadList(); refreshWho(); inp.focus();
 </body>
 </html>
 """
-
-@app.get("/")
-async def inicio():
-    return HTMLResponse(PAGINA)
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))
