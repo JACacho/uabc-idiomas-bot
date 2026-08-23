@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
 
-VERSION = "v20-2026-08-23"
+VERSION = "v21-2026-08-23"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
@@ -57,8 +57,8 @@ cliente_gemini2 = _mk_client(GEMINI_KEY_2)
 AREAS_RESP = {
     "Admision": "admision.mxl@uabc.edu.mx",
     "CEC": "recepcionmxl@uabc.edu.mx",
-    "Escolar/Escolaridad": "escolares_idiomas_mxl@uabc.edu.mx",
-    "Egresados/Bolsa de trabajo": "egresados__idiomas__mxl@uabc.edu.mx",
+    "Escolar": "escolares_idiomas_mxl@uabc.edu.mx",
+    "Egresados": "egresados__idiomas__mxl@uabc.edu.mx",
     "Eventos": "idiomas.mxl@uabc.edu.mx",
     "Otro": "idiomas.mxl@uabc.edu.mx",
 }
@@ -754,12 +754,12 @@ PAGINA = """
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
   #toast { display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); color: #fff; padding: 13px 22px; border-radius: 14px; font-size: 14.5px; z-index: 99; box-shadow: 0 4px 16px rgba(0,0,0,.35); max-width: 92%; text-align: center; }
-  .wrap { max-width: 1400px; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
-  #side { width: 280px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .wrap { width: 100%; margin: 0; height: 100vh; display: flex; flex-direction: row; }
+  #side { width: 280px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex-shrink: 0; }
   #side b { font-size: 14px; }
-  #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; }
+  #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; display: flex; align-items: center; }
   #side button:hover { background: rgba(255,255,255,.25); }
-  main { flex: 1; display: flex; flex-direction: column; height: 100vh; }
+  main { flex: 1; display: flex; flex-direction: column; height: 100vh; min-width: 0; }
   header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); flex-wrap: wrap; }
   header img { width: 54px; height: 54px; background: #fff; border-radius: 12px; padding: 3px; }
   header h1 { font-size: 17px; } header p { font-size: 12px; opacity: .85; }
@@ -767,9 +767,11 @@ PAGINA = """
   .langs button { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: transparent; color: #fff; cursor: pointer; }
   .langs button.on { background: #f7941d; border-color: #f7941d; font-weight: 700; }
   .utils { display: flex; gap: 5px; margin-left: auto; }
-  .utils button { font-size: 14px; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.15); color: #fff; cursor: pointer; }
+  .utils button { font-size: 14px; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.15); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .utils button:hover { background: rgba(255,255,255,.3); }
-  .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; }
+  .utils button svg { width: 18px; height: 18px; fill: currentColor; }
+  .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+  .hbtn svg { width: 20px; height: 20px; fill: currentColor; }
   #nuevo { margin-left: auto; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
@@ -819,8 +821,11 @@ PAGINA = """
 <div id="toast"></div>
 <div class="wrap">
   <aside id="side">
-    <b>Conversaciones</b>
-    <button id="nueva">Nueva conversacion</button>
+    <b id="side_title">Conversaciones</b>
+    <button id="nueva">
+      <svg style="width:16px;height:16px;margin-right:6px" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+      <span id="side_new">Nueva conversacion</span>
+    </button>
     <div id="lista"></div>
   </aside>
   <main>
@@ -831,16 +836,16 @@ PAGINA = """
         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
       </div>
       <div class="utils">
-        <button id="fmenos" title="Reducir letra">A-</button>
-        <button id="fmas" title="Aumentar letra">A+</button>
-        <button id="full" title="Pantalla completa">Pantalla completa</button>
+        <button id="fmenos" title="Reducir letra"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg></button>
+        <button id="fmas" title="Aumentar letra"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
+        <button id="full" title="Pantalla completa"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
       </div>
-      <button id="convs" class="hbtn" title="Conversaciones">C</button>
-      <button id="user" class="hbtn" title="Tu cuenta">U</button>
-      <button id="nuevo" class="hbtn" title="Nueva conversacion">N</button>
+      <button id="convs" class="hbtn" title="Conversaciones"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></button>
+      <button id="user" class="hbtn" title="Tu cuenta"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></button>
+      <button id="nuevo" class="hbtn" title="Nueva conversacion"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
     </header>
     <button id="gear" title="Personal autorizado">P</button>
-    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">X</button><b>Conversaciones</b><div id="lista2"></div></div>
+    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">X</button><b id="side_title2">Conversaciones</b><div id="lista2"></div></div>
     <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">X</button>
       <b>Tu cuenta</b>
       <div id="who"></div>
@@ -856,7 +861,7 @@ PAGINA = """
       <b>Reportar respuesta no resuelta</b>
       <span class="etiq">Area responsable</span>
       <select id="fbarea">
-        <option>Admision</option><option>CEC</option><option>Escolar/Escolaridad</option><option>Egresados/Bolsa de trabajo</option><option>Eventos</option><option>Otro</option>
+        <option>Admision</option><option>CEC</option><option>Escolar</option><option>Egresados</option><option>Eventos</option><option>Otro</option>
       </select>
       <span class="etiq">Cuentanos que falto</span>
       <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo la fecha exacta del examen de admision..."></textarea>
@@ -931,7 +936,9 @@ const TEXTOS = {
       {q: "Cuales son los horarios del Centro de Ensenanza de Lenguas (CEC)?", t: "Horarios del CEC"},
       {q: "Cuales son los requisitos de admision a la Facultad de Idiomas?", t: "Requisitos de admision"},
       {q: "Que carreras y programas tecnicos ofrece la Facultad de Idiomas?", t: "Carreras y TSU"}
-    ]
+    ],
+    side_title: "Conversaciones",
+    side_new: "Nueva conversacion"
   },
   en: {
     bienvenida: "Hi! I am UABCBot Idiomas, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
@@ -941,7 +948,9 @@ const TEXTOS = {
       {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "CEC schedules"},
       {q: "What are the admission requirements for the Faculty of Languages?", t: "Admission requirements"},
       {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "Degrees and TSU"}
-    ]
+    ],
+    side_title: "Conversations",
+    side_new: "New conversation"
   },
   fr: {
     bienvenida: "Bonjour! Je suis UABCBot Idiomas, l'assistant de la Faculte de Langues de l'UABC a Mexicali. Touchez une option ou ecrivez/dites-moi votre question en espagnol, anglais ou francais.",
@@ -951,7 +960,9 @@ const TEXTOS = {
       {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC)?", t: "Horaires du CEC"},
       {q: "Quelles sont les conditions d'admission a la Faculte de Langues?", t: "Conditions d'admission"},
       {q: "Quelles licences et programmes techniques offre la Faculte de Langues?", t: "Licences et TSU"}
-    ]
+    ],
+    side_title: "Conversations",
+    side_new: "Nouvelle conversation"
   }
 };
 
@@ -1054,6 +1065,12 @@ function applyLang(newLang){
   langPref = newLang;
   document.querySelectorAll('.langs button').forEach(b => b.classList.remove('on'));
   document.getElementById('L' + (newLang === 'auto' ? 'auto' : newLang)).classList.add('on');
+  
+  const t = TEXTOS[newLang === 'auto' ? 'es' : newLang] || TEXTOS.es;
+  document.getElementById('side_title').textContent = t.side_title;
+  document.getElementById('side_title2').textContent = t.side_title;
+  document.getElementById('side_new').textContent = t.side_new;
+  
   chat.innerHTML = '';
   welcome();
 }
