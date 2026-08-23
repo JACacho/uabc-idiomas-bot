@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
 
-VERSION = "v18-UX-2026-08-22"
+VERSION = "v19-2026-08-22"
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
 CARPETA = os.path.join(BASE, "datos_bot")
@@ -23,7 +23,7 @@ GH_TOKEN = os.environ.get("GITHUB_TOKEN", ""); GH_REPO = os.environ.get("GITHUB_
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", ""); GEMINI_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
 GROQ_KEY = os.environ.get("GROQ_API_KEY", ""); OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"; GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-TOPFAQ_HOURS = float(os.environ.get("TOPFAQ_HOURS", "48"))  # 48 horas caché
+TOPFAQ_HOURS = float(os.environ.get("TOPFAQ_HOURS", "48"))
 LOGO = os.path.join(BASE, "logo.png"); LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
 for d in (AUDIOS, CARPETA, CONVS, IMGS, FEEDBACK, CAPTURAS): os.makedirs(d, exist_ok=True)
 CATS_INTERNAS = ("clases", "tareas", "internos")
@@ -38,8 +38,8 @@ AREAS_RESP = {"Admision":"admision.mxl@uabc.edu.mx","CEC":"recepcionmxl@uabc.edu
 
 CAT_DEF = [
  {"tema":"Doctorado / Posgrado (DCL)","kw":["doctorado","doctorados","dcl","posgrado","doctor"],"nombre":"Dr. Maldonado","rol":"Responsable de Doctorados","correo":"","tel":"686-689-0825","oficina":"","horario":""},
- {"tema":"Titulacion","kw":["titulacion","titulacion","titularme","titular"],"nombre":"Responsable de Titulacion","rol":"Titulacion","correo":"","tel":"686-689-0825","oficina":"","horario":""},
- {"tema":"CEC / Cursos de idiomas","kw":["cec","curso","cursos","ingles","ingles","frances","frances"],"nombre":"Responsable CEC","rol":"Centro de Ensenanza de Lenguas","correo":"recepcionmxl@uabc.edu.mx","tel":"686 841-82-91 ext. 300","oficina":"","horario":""},
+ {"tema":"Titulacion","kw":["titulacion","titularme","titular"],"nombre":"Responsable de Titulacion","rol":"Titulacion","correo":"","tel":"686-689-0825","oficina":"","horario":""},
+ {"tema":"CEC / Cursos de idiomas","kw":["cec","curso","cursos","ingles","frances"],"nombre":"Responsable CEC","rol":"Centro de Ensenanza de Lenguas","correo":"recepcionmxl@uabc.edu.mx","tel":"686 841-82-91 ext. 300","oficina":"","horario":""},
  {"tema":"Egresados / Bolsa de trabajo","kw":["egresado","egresados","bolsa","empleo"],"nombre":"Mtra. Dulce Rodriguez Diaz","rol":"Responsable de Egresados y Bolsa de Trabajo","correo":"egresados__idiomas__mxl@uabc.edu.mx","tel":"686-689-0825","oficina":"","horario":""},
 ]
 def cargar_catalogo():
@@ -70,13 +70,12 @@ MESES_INV = {v:k for k,v in MESES.items()}
 MESES_ALT = "(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)"
 EXT_IMG = (".png",".jpg",".jpeg",".webp")
 PROMPT_POSTER = "Este es un anuncio o poster institucional. Extrae TODA la informacion util (que evento, quien invita, fecha, hora, lugar, contacto, requisitos) y devuelvela como texto claro en espanol, sin comentarios."
-IMG_PRUEBA = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 
 def fecha_hoy_es():
     n = datetime.now(); return f"{DIAS[n.weekday()]} {n.day} de {MESES[n.month]} de {n.year}"
 def detectar_idioma(t):
     t = (t or "").lower()
-    fr = ["bonjour","merci","combien","pour","avec","vous","diplom","traduction","salut","credit","je ","etud","etud","francais","francais","voud","veux","voaux","quel","quelle","aime","les ","des ","anglais"]
+    fr = ["bonjour","merci","combien","pour","avec","vous","diplom","traduction","salut","credit","je ","etud","francais","voud","veux","quel","quelle","aime","les ","des ","anglais"]
     en = ["hello","thank","how","many","credit","degree","translation","what","when","where","i ","would","like","to ","study","french","english","do ","you","for","me","is ","are ","the ","my ","can","help"]
     hf = sum(1 for w in fr if w in t); he = sum(1 for w in en if w in t)
     if hf >= 2 and hf > he: return "fr"
@@ -96,18 +95,18 @@ def _fechas_doc(t):
     return f
 
 MEMORIA_OFICIAL = [
- (["credito","titular","credit"], {"es":"Para titularte en la Licenciatura en Traduccion (LT) necesitas 349 creditos: 237 obligatorios, 102 optativos y 10 de practicas. Detalles: idiomas.mxl.uabc.mx o 686-689-0825.","en":"To graduate from Translation (LT) you need 349 credits. Details: idiomas.mxl.uabc.mx or 686-689-0825.","fr":"Pour diplomer en Traduction (LT) il faut 349 credits. Details: idiomas.mxl.uabc.mx ou 686-689-0825."}),
- (["carrera","tsu","tecnico","tecnico","programas","traduc","translation","traduction"], {"es":"La Facultad ofrece Licenciaturas en Ensenanza de Lenguas (LEL) y Traduccion (LT), y el TSU. Consulta idiomas.mxl.uabc.mx o 686-689-0825.","en":"The Faculty offers Language Teaching (LEL) and Translation (LT) degrees plus a TSU. See idiomas.mxl.uabc.mx.","fr":"La Faculte offre les licences LEL et LT et un TSU. Voir idiomas.mxl.uabc.mx."}),
- (["frances","frances","french","francais","francais","ingles","ingles","english","anglais","study","estudiar","etud","curso","cours","cec","horario"], {"es":"El CEC ofrece cursos de ingles, frances, aleman, italiano, portugues, ruso, mandarin, japones, coreano y espanol, en formatos semanal, sabatino, intensivo e intersemestral. Grupos en cecuabc.com. Informes: recepcionmxl@uabc.edu.mx o 686 841-82-91 ext. 300.","en":"The CEC offers English, French, German, Italian, Portuguese, Russian, Mandarin, Japanese, Korean and Spanish courses. Groups at cecuabc.com.","fr":"Le CEC propose des cours d'anglais, francais, allemand, italien, portugais, russe, mandarin, japonais, coreen et espagnol. Groupes sur cecuabc.com."}),
- (["admision","requisito","admission"], {"es":"Para ingresar: 1) concluir bachillerato, 2) certificado/acta/CURP, 3) registro en el portal (agosto y enero), 4) Examen de Seleccion. No se requiere ingles avanzado. Fechas: admision.uabc.mx.","en":"To enter: finish high school, certificates, register (Aug/Jan), take the Selection Exam. No advanced English needed. Dates: admision.uabc.mx.","fr":"Pour entrer: terminer le lycee, certificats, s'inscrire (aout/janvier), passer l'Examen. Dates: admision.uabc.mx."}),
- (["que haces","what do you do","ayudar","help","sirves","puedes hacer"], {"es":"Te informo sobre creditos, CEC, admision, carreras, avisos y a QUIEN acudir por cada tema, en espanol, ingles o frances: te leo o te escucho.","en":"I cover credits, CEC, admission, degrees, notices and WHO to contact for each topic: I read you or listen to you.","fr":"Je couvre credits, CEC, admission, licences, avis et QUI contacter : je te lis ou je t'ecoute."}),
+ (["credito","titular","credit"], {"es":"Para titularte en la Licenciatura en Traduccion (LT) necesitas 349 creditos: 237 obligatorios, 102 optativos y 10 de practicas. Detalles: idiomas.mxl.uabc.mx o 686-689-0825.","en":"To graduate from Translation (LT) you need 349 credits: 237 mandatory, 102 electives and 10 professional internships. Details: idiomas.mxl.uabc.mx or call 686-689-0825.","fr":"Pour diplomer en Traduction (LT) il faut 349 credits: 237 obligatoires, 102 optionnels et 10 de stages. Details: idiomas.mxl.uabc.mx ou 686-689-0825."}),
+ (["carrera","tsu","tecnico","programas","traduc","translation","traduction"], {"es":"La Facultad ofrece Licenciaturas en Ensenanza de Lenguas (LEL) y Traduccion (LT), y el TSU. Consulta idiomas.mxl.uabc.mx o 686-689-0825.","en":"The Faculty offers Language Teaching (LEL) and Translation (LT) degrees plus a TSU. See idiomas.mxl.uabc.mx or call 686-689-0825.","fr":"La Faculte offre les licences LEL et LT et un TSU. Voir idiomas.mxl.uabc.mx ou 686-689-0825."}),
+ (["frances","french","francais","ingles","english","anglais","study","estudiar","etud","curso","cours","cec","horario"], {"es":"El CEC ofrece cursos de ingles, frances, aleman, italiano, portugues, ruso, mandarin, japones, coreano y espanol, en formatos semanal, sabatino, intensivo e intersemestral. Grupos en cecuabc.com. Informes: recepcionmxl@uabc.edu.mx o 686 841-82-91 ext. 300.","en":"The CEC offers English, French, German, Italian, Portuguese, Russian, Mandarin, Japanese, Korean and Spanish courses. Groups at cecuabc.com. Info: recepcionmxl@uabc.edu.mx or 686 841-82-91 ext. 300.","fr":"Le CEC propose des cours d'anglais, francais, allemand, italien, portugais, russe, mandarin, japonais, coreen et espagnol. Groupes sur cecuabc.com. Infos: recepcionmxl@uabc.edu.mx ou 686 841-82-91 poste 300."}),
+ (["admision","requisito","admission"], {"es":"Para ingresar: 1) concluir bachillerato, 2) certificado/acta/CURP, 3) registro en el portal (agosto y enero), 4) Examen de Seleccion. No se requiere ingles avanzado. Fechas: admision.uabc.mx.","en":"To enter: 1) finish high school, 2) certificate/acta/CURP, 3) register (August and January), 4) Selection Exam. No advanced English needed. Dates: admision.uabc.mx.","fr":"Pour entrer: 1) terminer le lycee, 2) certificat/acta/CURP, 3) s'inscrire (aout et janvier), 4) Examen de Selection. Dates: admision.uabc.mx."}),
+ (["que haces","what do you do","ayudar","help","sirves","puedes hacer"], {"es":"Te informo sobre creditos, CEC, admision, carreras, avisos y a QUIEN acudir por cada tema, en espanol, ingles o frances: te leo o te escucho.","en":"I cover credits, CEC, admission, degrees, notices and WHO to contact for each topic, in Spanish, English or French: I read you or listen to you.","fr":"Je couvre credits, CEC, admission, licences, avis et QUI contacter, en espagnol, anglais ou francais: je vous lis ou vous ecoute."}),
 ]
 
 def _limpiar_doc(t):
     out = []
     for ln in (t or "").splitlines():
         s = ln.strip()
-        if not s or s.startswith("===") or s.startswith("DOCUMENTO") or s.startswith("poster"): continue
+        if not s or s.startswith("===") or s.startswith("DOCUMENTO"): continue
         out.append(s)
     return "\n".join(out)
 def _tokens(t): return set(re.findall(r"[a-zaeiou$0-9]+", (t or "").lower()))
@@ -242,13 +241,10 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     suf={"es":" (Responde en espanol, conciso.)","en":" (Answer in English, concise.)","fr":" (Reponds en francais, concis.)"}[lang]
     pf=pregunta+suf
     hist=[{"role":("user" if m["role"]=="user" else "assistant"),"content":m["content"]} for m in (historial or []) if isinstance(m,dict) and isinstance(m.get("content"),str)]
-    
-    # OPTIMIZACION DE COSTOS: Groq primero (gratis), luego Gemini (gratis), ultimo OpenRouter (pago)
     texto=llamar_openai(sp,hist,pf,GROQ_URL,GROQ_KEY,["llama-3.1-70b-versatile","llama-3.1-8b-instant"])
     if not _es_valida(texto): texto=llamar_gemini(cliente_gemini,sp,hist,pf)
     if not _es_valida(texto): texto=llamar_gemini(cliente_gemini2,sp,hist,pf)
     if not _es_valida(texto): texto=llamar_openai(sp,hist,pf,OR_URL,OR_KEY,["deepseek/deepseek-v4-flash"])
-    
     if not _es_valida(texto):
         fb=respuesta_de_documentos(pregunta,rol)
         if fb: return fb,lang
@@ -286,7 +282,7 @@ app = FastAPI()
 @app.get("/api/version")
 async def api_version(): return {"version": VERSION}
 
-FAQ=[(["credito","titular","titul"],"Cuantos creditos necesito para titularme en Traduccion?"),(["costo","cuesta","precio","inscri"],"Cuanto cuesta inscribirme a las clases de ingles?"),(["horario","cec"],"Cuales son los horarios del CEC?"),(["admision","requisito"],"Cuales son los requisitos de admision?"),(["carrera","tsu","tecnico","tecnico"],"Que carreras y programas tecnicos ofrece?")]
+FAQ=[(["credito","titular","titul"],"Cuantos creditos necesito para titularme en Traduccion?"),(["costo","cuesta","precio","inscri"],"Cuanto cuesta inscribirme a las clases de ingles?"),(["horario","cec"],"Cuales son los horarios del CEC?"),(["admision","requisito"],"Cuales son los requisitos de admision?"),(["carrera","tsu","tecnico"],"Que carreras y programas tecnicos ofrece?")]
 def normalizar_faq(t):
     low=(t or "").lower()
     for k,c in FAQ:
@@ -556,7 +552,6 @@ async def img(n:str): return FileResponse(os.path.join(IMGS,n),media_type="image
 @app.get("/logo.png")
 async def logo(): return FileResponse(LOGO) if os.path.exists(LOGO) else JSONResponse({})
 
-# ================= DISEÑO UX MODERNO (Sin botones arcaicos) =================
 PAGINA = """
 <!DOCTYPE html>
 <html lang="es">
@@ -565,78 +560,81 @@ PAGINA = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>UABCBot Idiomas</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:'Inter',system-ui,-apple-system,sans-serif}
-body{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;display:flex;justify-content:center;align-items:center}
-.chat-container{width:100%;max-width:900px;height:95vh;background:#fff;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);display:flex;flex-direction:column;overflow:hidden}
-.header{background:linear-gradient(135deg,#00684a,#00855f);color:#fff;padding:20px 24px;display:flex;justify-content:space-between;align-items:center;gap:16px}
-.header h1{font-size:20px;font-weight:600}
-.header p{font-size:12px;opacity:0.9}
-.lang-selector{display:flex;gap:8px}
-.lang-btn{padding:6px 12px;border-radius:20px;border:1px solid rgba(255,255,255,0.3);background:transparent;color:#fff;cursor:pointer;font-size:12px;transition:all 0.3s}
-.lang-btn.active{background:#f7941d;border-color:#f7941d;font-weight:600}
-.messages{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:16px;background:#f8f9fa}
-.welcome-card{background:#fff;padding:24px;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08);margin-bottom:16px}
-.welcome-text{font-size:15px;color:#1a1a1a;line-height:1.6;margin-bottom:16px}
-.suggestion-chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{padding:10px 16px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;border-radius:24px;cursor:pointer;font-size:13px;transition:transform 0.2s,box-shadow 0.2s}
-.chip:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(102,126,234,0.4)}
-.message{max-width:80%;padding:14px 18px;border-radius:18px;font-size:14px;line-height:1.5;animation:fadeIn 0.3s}
-@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-.message.user{align-self:flex-end;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-bottom-right-radius:4px}
-.message.bot{align-self:flex-start;background:#fff;color:#1a1a1a;box-shadow:0 2px 8px rgba(0,0,0,0.1);border-bottom-left-radius:4px}
-.input-area{padding:20px 24px;background:#fff;border-top:1px solid #e5e7eb;display:flex;gap:12px;align-items:center}
-.input-wrapper{flex:1;position:relative}
-.input-field{width:100%;padding:14px 48px 14px 20px;border:2px solid #e5e7eb;border-radius:28px;font-size:14px;outline:none;transition:border-color 0.3s}
-.input-field:focus{border-color:#667eea}
-.send-btn{width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#667eea,#764ba2);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform 0.2s}
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif}
+body{background:#eef1f4;min-height:100vh}
+.app{max-width:1000px;margin:0 auto;height:100vh;display:flex;flex-direction:column;background:#fff;box-shadow:0 0 40px rgba(0,0,0,0.1)}
+.header{background:linear-gradient(135deg,#00684a,#00855f);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px}
+.header img{width:44px;height:44px;background:#fff;border-radius:10px;padding:2px}
+.header h1{font-size:18px;font-weight:600}
+.header p{font-size:11px;opacity:0.9}
+.controls{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;align-items:center}
+.lang-btn{padding:5px 10px;border-radius:20px;border:1px solid rgba(255,255,255,0.4);background:transparent;color:#fff;cursor:pointer;font-size:11px;font-weight:500;transition:all 0.2s}
+.lang-btn.active{background:#f7941d;border-color:#f7941d;color:#fff}
+.icon-btn{width:34px;height:34px;border-radius:50%;border:none;background:rgba(255,255,255,0.15);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.2s}
+.icon-btn:hover{background:rgba(255,255,255,0.3)}
+.icon-btn svg{width:18px;height:18px;fill:currentColor}
+.messages{flex:1;overflow-y:auto;padding:20px;background:#f8f9fa;display:flex;flex-direction:column;gap:12px}
+.welcome{background:#fff;padding:20px;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.06);margin-bottom:8px}
+.welcome h2{color:#00684a;font-size:18px;margin-bottom:8px}
+.welcome p{color:#555;font-size:14px;line-height:1.5;margin-bottom:16px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:10px 16px;background:#fff;color:#00684a;border:2px solid #00855f;border-radius:24px;cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s}
+.chip:hover{background:#00855f;color:#fff;transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,133,95,0.3)}
+.msg{max-width:80%;padding:12px 16px;border-radius:16px;font-size:14px;line-height:1.5;animation:fadeIn 0.3s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-self:flex-end;background:#00855f;color:#fff;border-bottom-right-radius:4px}
+.msg.bot{align-self:flex-start;background:#fff;color:#1a1a1a;box-shadow:0 2px 8px rgba(0,0,0,0.08);border-bottom-left-radius:4px}
+.msg audio{max-width:240px;margin-top:6px}
+.input-area{padding:16px 20px;background:#fff;border-top:1px solid #e5e7eb;display:flex;gap:10px;align-items:center}
+.input-field{flex:1;padding:12px 18px;border:2px solid #e5e7eb;border-radius:24px;font-size:14px;outline:none;transition:border-color 0.2s}
+.input-field:focus{border-color:#00855f}
+.send-btn{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#00684a,#00855f);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform 0.2s}
 .send-btn:hover{transform:scale(1.05)}
-.icon-btn{width:40px;height:40px;border-radius:50%;border:none;background:#f3f4f6;color:#6b7280;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s}
-.icon-btn:hover{background:#e5e7eb;color:#1a1a1a}
-.menu-btn{position:fixed;top:20px;right:20px;width:48px;height:48px;border-radius:50%;background:#fff;color:#667eea;border:none;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.15);display:flex;align-items:center;justify-content:center;font-size:20px;z-index:100}
-.panel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:32px;border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:600px;width:90%;max-height:80vh;overflow-y:auto;z-index:200}
-.panel.active{display:block}
-.panel-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:150}
-.panel-overlay.active{display:block}
-.close-panel{position:absolute;top:16px;right:16px;width:36px;height:36px;border-radius:50%;border:none;background:#f3f4f6;cursor:pointer;font-size:18px}
-.panel h2{margin-bottom:20px;font-size:18px;color:#1a1a1a}
-.panel input,.panel select,.panel textarea{width:100%;padding:12px 16px;margin-bottom:12px;border:2px solid #e5e7eb;border-radius:12px;font-size:14px;outline:none}
-.panel input:focus,.panel select:focus,.panel textarea:focus{border-color:#667eea}
-.panel button{padding:12px 24px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;border-radius:12px;cursor:pointer;font-size:14px;font-weight:500;margin-right:8px;margin-bottom:8px;transition:transform 0.2s}
-.panel button:hover{transform:translateY(-2px)}
-.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);padding:14px 24px;border-radius:12px;color:#fff;font-size:14px;z-index:1000;animation:slideIn 0.3s}
-@keyframes slideIn{from{transform:translateX(-50%) translateY(-20px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
-.toast.success{background:#10b981}
-.toast.error{background:#ef4444}
-.toast.warning{background:#f59e0b}
-@media(max-width:768px){.chat-container{border-radius:0;height:100vh}.header h1{font-size:16px}.messages{padding:16px}.message{max-width:90%}}
+.send-btn svg{width:20px;height:20px;fill:currentColor}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);padding:12px 20px;border-radius:10px;color:#fff;font-size:13px;z-index:1000;animation:slideIn 0.3s}
+@keyframes slideIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+.toast.ok{background:#00855f}.toast.err{background:#d32f2f}.toast.warn{background:#f7941d}
+.panel{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;padding:24px;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px;width:90%;max-height:80vh;overflow-y:auto;z-index:200}
+.panel.show{display:block}
+.panel-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:150}
+.panel-overlay.show{display:block}
+.panel h3{color:#00684a;margin-bottom:12px;font-size:16px}
+.panel input,.panel select,.panel textarea{width:100%;padding:10px 14px;margin-bottom:10px;border:2px solid #e5e7eb;border-radius:10px;font-size:13px;outline:none}
+.panel input:focus,.panel select:focus,.panel textarea:focus{border-color:#00855f}
+.panel button{padding:10px 18px;background:#00855f;color:#fff;border:none;border-radius:10px;cursor:pointer;font-size:13px;margin-right:6px;margin-bottom:6px}
+.panel button:hover{background:#00684a}
+.close-x{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;border:none;background:#f3f4f6;cursor:pointer;font-size:16px;color:#666}
+@media(max-width:768px){.app{height:100vh}.header h1{font-size:15px}.msg{max-width:90%}}
 </style>
 </head>
 <body>
-<button class="menu-btn" onclick="togglePanel()">⚙</button>
-<div class="chat-container">
+<div class="app">
   <div class="header">
+    <img src="/logo.png" alt="logo">
     <div><h1>UABCBot Idiomas</h1><p>Facultad de Idiomas UABC Mexicali</p></div>
-    <div class="lang-selector">
+    <div class="controls">
       <button class="lang-btn active" onclick="setLang('auto')">AUTO</button>
       <button class="lang-btn" onclick="setLang('es')">ES</button>
       <button class="lang-btn" onclick="setLang('en')">EN</button>
       <button class="lang-btn" onclick="setLang('fr')">FR</button>
+      <button class="icon-btn" onclick="changeFontSize(-0.1)" title="Reducir letra"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg></button>
+      <button class="icon-btn" onclick="changeFontSize(0.1)" title="Aumentar letra"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
+      <button class="icon-btn" onclick="toggleFullscreen()" title="Pantalla completa"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
+      <button class="icon-btn" onclick="togglePanel()" title="Panel"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.611 3.611 0 0112 15.6z"/></svg></button>
     </div>
   </div>
   <div class="messages" id="messages"></div>
   <div class="input-area">
-    <button class="icon-btn" onclick="toggleVoice()" title="Voz">🎤</button>
-    <div class="input-wrapper">
-      <input type="text" class="input-field" id="input" placeholder="Escribe tu pregunta..." onkeypress="if(event.key==='Enter')sendMessage()">
-    </div>
-    <button class="send-btn" onclick="sendMessage()"></button>
-    <button class="icon-btn" onclick="toggleFeedback()" title="Reportar"></button>
+    <button class="icon-btn" onclick="toggleVoice()" title="Voz" style="background:#00855f"><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg></button>
+    <input type="text" class="input-field" id="input" placeholder="Escribe tu pregunta..." onkeypress="if(event.key==='Enter')sendMessage()">
+    <button class="send-btn" onclick="sendMessage()" title="Enviar"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+    <button class="icon-btn" onclick="toggleFeedback()" title="Reportar" style="background:#d32f2f"><svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></button>
   </div>
 </div>
 <div class="panel-overlay" id="overlay" onclick="togglePanel()"></div>
 <div class="panel" id="panel">
-  <button class="close-panel" onclick="togglePanel()">×</button>
-  <h2>Panel de Administración</h2>
+  <button class="close-x" onclick="togglePanel()">X</button>
+  <h3>Panel de Administracion</h3>
   <input type="password" id="adminKey" placeholder="Clave de acceso">
   <button onclick="unlockPanel()">Entrar</button>
   <div id="adminContent" style="display:none">
@@ -646,40 +644,42 @@ body{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh
     <textarea id="textoAviso" rows="4" placeholder="Texto del aviso..."></textarea>
     <button onclick="uploadNotice()">Publicar</button>
     <button onclick="showReport()">Ver Reporte</button>
-    <div id="reporte"></div>
+    <div id="reporte" style="white-space:pre-wrap;background:#f8f9fa;padding:12px;border-radius:8px;margin-top:10px;font-size:12px"></div>
   </div>
 </div>
 <script>
-let hist=[],state={pending:false,active:false},langPref="auto",lastP="",lastR="";
+let hist=[],state={pending:false,active:false},langPref="auto",lastP="",lastR="",fontScale=1,rec=null;
 const messages=document.getElementById('messages');
 const input=document.getElementById('input');
 
-const welcome={es:"Hola! Soy UABCBot Idiomas de la Facultad de Idiomas UABC Mexicali. Te atiendo en espanol, ingles o frances. Como puedo ayudarte hoy?",en:"Hi! I am UABCBot Idiomas. I serve you in Spanish, English or French. How can I help you today?",fr:"Bonjour! Je suis UABCBot Idiomas. Je vous aide en espagnol, anglais ou francais. Comment puis-je vous aider?"};
-const suggestions=[
-  {q:"Cuantos creditos necesito para titularme?",l:{es:"Creditos para titularme",en:"Credits to graduate",fr:"Credits pour diplomer"}},
-  {q:"Cuanto cuesta inscribirme a clases de ingles?",l:{es:"Costo clases ingles",en:"English class cost",fr:"Cout cours anglais"}},
-  {q:"Cuales son los requisitos de admision?",l:{es:"Requisitos admision",en:"Admission requirements",fr:"Conditions admission"}},
-  {q:"Que carreras ofrece la facultad?",l:{es:"Carreras disponibles",en:"Available degrees",fr:"Licences disponibles"}}
-];
+const W={es:"Hola! Soy UABCBot Idiomas de la Facultad de Idiomas UABC Mexicali. Te atiendo en espanol, ingles o frances: te leo o te escucho. Como puedo ayudarte hoy?",en:"Hi! I am UABCBot Idiomas of the UABC Faculty of Languages in Mexicali. I serve you in Spanish, English or French: I read you or listen to you. How can I help you today?",fr:"Bonjour! Je suis UABCBot Idiomas de la Faculte de Langues de l'UABC a Mexicali. Je vous aide en espagnol, anglais ou francais: je vous lis ou vous ecoute. Comment puis-je vous aider?"};
+const S={
+  es:[{q:"Cuantos creditos necesito para titularme en Traduccion?",t:"Creditos para titularme"},{q:"Cuanto cuesta inscribirme a las clases de ingles?",t:"Costo clases ingles"},{q:"Cuales son los requisitos de admision?",t:"Requisitos admision"},{q:"Que carreras y programas tecnicos ofrece la Facultad?",t:"Carreras y TSU"}],
+  en:[{q:"How many credits do I need to graduate from Translation?",t:"Credits to graduate"},{q:"How much does it cost to enroll in English classes?",t:"English class cost"},{q:"What are the admission requirements?",t:"Admission requirements"},{q:"What degrees and programs does the Faculty offer?",t:"Degrees and TSU"}],
+  fr:[{q:"Combien de credits pour diplomer en Traduction?",t:"Credits pour diplomer"},{q:"Combien coutent les cours d'anglais?",t:"Cout cours anglais"},{q:"Quelles sont les conditions d'admission?",t:"Conditions admission"},{q:"Quelles licences et programmes offre la Faculte?",t:"Licences et TSU"}]
+};
 
 function setLang(l){langPref=l;document.querySelectorAll('.lang-btn').forEach(b=>b.classList.remove('active'));event.target.classList.add('active');loadWelcome()}
-function loadWelcome(){const w=welcome[langPref]||welcome.es;let chips=suggestions.map(s=>`<button class="chip" onclick="sendMessage('${s.q}')">${s.l[langPref]||s.l.es}</button>`).join('');
-messages.innerHTML=`<div class="welcome-card"><div class="welcome-text">${w}</div><div class="suggestion-chips">${chips}</div></div>`}
-function sendMessage(q){const msg=q||input.value.trim();if(!msg)return;hist.push({role:'user',content:msg});addMessage(msg,'user');input.value='';lastP=msg;thinking();
+function loadWelcome(){const L=langPref==='auto'?'es':langPref;const w=W[L]||W.es;const sug=S[L]||S.es;let chips=sug.map(s=>'<button class="chip" onclick="sendQ(\''+s.q.replace(/'/g,"\\'")+'\')">'+s.t+'</button>').join('');
+messages.innerHTML='<div class="welcome"><h2>UABCBot Idiomas</h2><p>'+w+'</p><div class="chips">'+chips+'</div></div>'}
+function sendQ(q){input.value=q;sendMessage()}
+function sendMessage(){const msg=input.value.trim();if(!msg)return;hist.push({role:'user',content:msg});addMsg(msg,'user');input.value='';lastP=msg;thinking();
 fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({msg,hist:hist.slice(-7),state,lang:langPref,rol:'externo'})})
-.then(r=>r.json()).then(d=>{removeThink();state=d.state;lastR=d.reply;hist.push({role:'assistant',content:d.reply});addMessage(d.reply,'bot')}).catch(e=>{removeThink();addMessage('Error: '+e,'bot')})}
-function addMessage(text,role){const div=document.createElement('div');div.className='message '+role;div.textContent=text;messages.appendChild(div);messages.scrollTop=messages.scrollHeight}
-function thinking(){const div=document.createElement('div');div.className='message bot';div.id='thinking';div.textContent='Pensando...';messages.appendChild(div);messages.scrollTop=messages.scrollHeight}
+.then(r=>r.json()).then(d=>{removeThink();state=d.state;lastR=d.reply;hist.push({role:'assistant',content:d.reply});addMsg(d.reply,'bot')}).catch(e=>{removeThink();addMsg('Error: '+e,'bot')})}
+function addMsg(text,role){const div=document.createElement('div');div.className='msg '+role;div.textContent=text;messages.appendChild(div);messages.scrollTop=messages.scrollHeight}
+function thinking(){const div=document.createElement('div');div.className='msg bot';div.id='thinking';div.textContent='Pensando...';messages.appendChild(div);messages.scrollTop=messages.scrollHeight}
 function removeThink(){const t=document.getElementById('thinking');if(t)t.remove()}
-function togglePanel(){document.getElementById('panel').classList.toggle('active');document.getElementById('overlay').classList.toggle('active')}
-function unlockPanel(){const k=document.getElementById('adminKey').value;fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:k})}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('adminContent').style.display='block';toast('Panel abierto','success')}else toast('Clave incorrecta','error')})}
+function changeFontSize(d){fontScale=Math.max(0.8,Math.min(1.6,fontScale+d));document.documentElement.style.setProperty('--fs',fontScale);toast('Letra: '+Math.round(fontScale*100)+'%','ok')}
+function toggleFullscreen(){if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()}
+function togglePanel(){document.getElementById('panel').classList.toggle('show');document.getElementById('overlay').classList.toggle('show')}
+function unlockPanel(){const k=document.getElementById('adminKey').value;fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:k})}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('adminContent').style.display='block';toast('Panel abierto','ok')}else toast('Clave incorrecta','err')})}
 function uploadNotice(){const cat=document.getElementById('categoria').value;const resp=document.getElementById('responsable').value;const txt=document.getElementById('textoAviso').value;
 const fd=new FormData();fd.append('categoria',cat);fd.append('responsable',resp);fd.append('texto_manual',txt);
-fetch('/api/upload',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{toast(d.estado,'success');document.getElementById('textoAviso').value=''}).catch(e=>toast('Error: '+e,'error'))}
-function showReport(){fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:document.getElementById('adminKey').value})}).then(r=>r.json()).then(d=>{let t='Total: '+d.total+' - Hoy: '+d.hoy+'\\n';d.top.forEach((x,i)=>t+=(i+1)+'. '+x[0]+' ('+x[1]+')\\n');document.getElementById('reporte').innerText=t}).catch(e=>toast('Error: '+e,'error'))}
+fetch('/api/upload',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{toast(d.estado,'ok');document.getElementById('textoAviso').value=''}).catch(e=>toast('Error: '+e,'err'))}
+function showReport(){fetch('/api/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clave:document.getElementById('adminKey').value})}).then(r=>r.json()).then(d=>{let t='Total: '+d.total+' - Hoy: '+d.hoy+'\\n';d.top.forEach((x,i)=>t+=(i+1)+'. '+x[0]+' ('+x[1]+')\\n');document.getElementById('reporte').innerText=t}).catch(e=>toast('Error: '+e,'err'))}
 function toast(m,t){const div=document.createElement('div');div.className='toast '+t;div.textContent=m;document.body.appendChild(div);setTimeout(()=>div.remove(),3000)}
-function toggleVoice(){toast('Funcion de voz disponible','warning')}
-function toggleFeedback(){toast('Reportar respuesta','warning')}
+function toggleVoice(){toast('Funcion de voz disponible proximamente','warn')}
+function toggleFeedback(){toast('Reportar respuesta disponible proximamente','warn')}
 loadWelcome();
 </script>
 </body>
