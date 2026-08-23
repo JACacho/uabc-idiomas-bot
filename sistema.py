@@ -336,13 +336,18 @@ def responder(pregunta, historial, lang_pref="auto"):
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
+    
+    # ==========================================
+    # OPTIMIZACIÓN DE COSTOS: Groq primero (gratis), luego Gemini (gratis), último OpenRouter (pago)
+    # ==========================================
+    texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.1-70b-versatile", "llama-3.1-8b-instant"])
+    if not _es_valida(texto):
+        texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
     if not _es_valida(texto):
         texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final)
     if not _es_valida(texto):
-        texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite", "meta-llama/llama-3.3-70b-instruct:free"])
-    if not _es_valida(texto):
-        texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
+        texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["deepseek/deepseek-v4-flash"])
+    
     if not _es_valida(texto):
         fb = respuesta_de_documentos(pregunta)
         if fb:
