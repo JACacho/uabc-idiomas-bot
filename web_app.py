@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
 
-VERSION = "v22-2026-08-23"
+VERSION = "v22.1-2026-08-23"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
@@ -771,7 +771,6 @@ PAGINA = """
   .utils button:hover { background: rgba(255,255,255,.3); }
   .utils button svg { width: 18px; height: 18px; fill: currentColor; }
   .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
-  .hbtn svg { width: 20px; height: 20px; fill: currentColor; }
   #nuevo { margin-left: auto; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
@@ -794,10 +793,8 @@ PAGINA = """
   @keyframes pulso { 50% { transform: scale(1.12); } }
   #inp { flex: 1; border: 1px solid #cfd8dc; border-radius: 999px; padding: 12px 18px; font-size: calc(15px * var(--fs, 1)); outline: none; }
   #inp:focus { border-color: #00855f; }
-  #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: #f7941d; color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-  #send svg { width: 22px; height: 22px; fill: currentColor; }
-  #fb { width: 46px; height: 46px; border-radius: 50%; border: none; background: #d32f2f; color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-  #fb svg { width: 22px; height: 22px; fill: currentColor; }
+  #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: #f7941d; color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; }
+  #fb { width: 46px; height: 46px; border-radius: 50%; border: none; background: #d32f2f; color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; }
   #gear { position: fixed; right: 10px; top: 74px; background: rgba(0,0,0,.25); border: none; color: #fff; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; z-index: 5; }
   #convs { display: none; }
   .drawer { display: none; background: #fff; margin: 0 12px 8px; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 13px; max-height: 60vh; overflow-y: auto; }
@@ -823,10 +820,10 @@ PAGINA = """
 <div id="toast"></div>
 <div class="wrap">
   <aside id="side">
-    <b id="side_title">Conversaciones</b>
+    <b id="side_title">🗂️ Conversaciones</b>
     <button id="nueva">
       <svg style="width:16px;height:16px;margin-right:6px" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-      <span id="side_new">Nueva conversacion</span>
+      <span id="side_new">➕ Nueva conversación</span>
     </button>
     <div id="lista"></div>
   </aside>
@@ -842,68 +839,68 @@ PAGINA = """
         <button id="fmas" title="Aumentar letra"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
         <button id="full" title="Pantalla completa"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
       </div>
-      <button id="convs" class="hbtn" title="Conversaciones"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></button>
-      <button id="user" class="hbtn" title="Tu cuenta"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></button>
-      <button id="nuevo" class="hbtn" title="Nueva conversacion"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
+      <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
+      <button id="user" class="hbtn" title="Tu cuenta">👤</button>
+      <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
     </header>
-    <button id="gear" title="Personal autorizado">P</button>
-    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">X</button><b id="side_title2">Conversaciones</b><div id="lista2"></div></div>
-    <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">X</button>
-      <b>Tu cuenta</b>
+    <button id="gear" title="Personal autorizado">⚙️</button>
+    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b id="side_title2">🗂️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
+      <b>👤 Tu cuenta</b>
       <div id="who"></div>
       <input id="uusr" placeholder="Usuario o correo">
       <input id="ukey" type="password" placeholder="Clave">
-      <button id="ureg">Registrarme</button>
-      <button id="ulin">Entrar</button>
-      <button id="uguest">Seguir como invitado</button>
-      <button id="uout">Cerrar sesion</button>
+      <button id="ureg">✨ Registrarme</button>
+      <button id="ulin"> Entrar</button>
+      <button id="uguest">👋 Seguir como invitado</button>
+      <button id="uout"> Cerrar sesión</button>
     </div>
     <div id="chat"></div>
-    <div id="fbdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">X</button>
-      <b>Reportar respuesta no resuelta</b>
-      <span class="etiq">Area responsable</span>
+    <div id="fbdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
+      <b>🚩 Reportar respuesta no resuelta</b>
+      <span class="etiq">Área responsable</span>
       <select id="fbarea">
-        <option>Admision</option><option>CEC</option><option>Escolar</option><option>Egresados</option><option>Eventos</option><option>Otro</option>
+        <option>Admisión</option><option>CEC</option><option>Escolar/Escolaridad</option><option>Egresados/Bolsa de trabajo</option><option>Eventos</option><option>Otro</option>
       </select>
-      <span class="etiq">Cuentanos que falto</span>
-      <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo la fecha exacta del examen de admision..."></textarea>
-      <button id="fbsend">Enviar al responsable</button>
+      <span class="etiq">Cuéntanos qué faltó</span>
+      <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo la fecha exacta del examen de admisión..."></textarea>
+      <button id="fbsend">📨 Enviar al responsable</button>
     </div>
-    <div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">X</button>
-      <b>Panel de personal</b>
+    <div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
+      <b>🛠️ Panel de personal</b>
       <input id="clave" type="password" placeholder="Clave de acceso (Enter para entrar)">
-      <button id="unlock">Entrar</button>
-      <button id="salirp">Salir del panel</button>
+      <button id="unlock">🔓 Entrar</button>
+      <button id="salirp">🚪 Salir del panel</button>
       <div id="zona" style="display:none">
-        <span class="etiq">1. Categoria del aviso</span>
+        <span class="etiq">1️ Categoría del aviso</span>
         <select id="fcat">
-          <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Examenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option>
+          <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option>
         </select>
-        <span class="etiq">2. Vigente hasta (opcional)</span>
+        <span class="etiq">2️ Vigente hasta (opcional)</span>
         <input id="fvig" type="date">
-        <span class="etiq">3. Elige o arrastra el archivo (TXT, PDF o imagen)</span>
-        <div id="drop">Arrastra aqui tu documento o poster<br><small>o toca para elegirlo</small></div>
+        <span class="etiq">3️⃣ Elige o arrastra el archivo (TXT, PDF o imagen)</span>
+        <div id="drop">📥 Arrastra aquí tu documento o póster<br><small>o toca para elegirlo</small></div>
         <input id="ffile" type="file" style="display:none">
-        <span class="etiq">Texto del poster (plan B recomendado para imagenes)</span>
-        <div class="ayuda">Si subes una IMAGEN y el motor de vision esta saturado, copia y pega aqui lo que dice el poster (evento, fecha, hora, lugar) y se publicara al instante sin esperar.</div>
-        <textarea id="ftexto" rows="4" placeholder="Ejemplo: Platica para Potenciales a Egresar. Martes 18 de agosto, 12:00 y 16:00 hrs, Sala de Usos Multiples. Informes: Mtra. Dulce Rodriguez, egresados__idiomas__mxl@uabc.edu.mx"></textarea>
-        <button id="fsubir">Subir y publicar</button>
-        <button id="nota">Grabar nota de voz</button>
-        <button id="ldocs">Ver documentos</button>
-        <button id="lfb">Ver feedbacks</button>
-        <button id="rep">Reporte de uso</button>
+        <span class="etiq">📝 Texto del póster (plan B recomendado para imágenes)</span>
+        <div class="ayuda">Si subes una IMAGEN y el motor de visión está saturado, copia y pega aquí lo que dice el póster (evento, fecha, hora, lugar) y se publicará al instante sin esperar.</div>
+        <textarea id="ftexto" rows="4" placeholder="Ejemplo: Plática para Potenciales a Egresar. Martes 18 de agosto, 12:00 y 16:00 hrs, Sala de Usos Múltiples. Informes: Mtra. Dulce Rodríguez, egresados__idiomas__mxl@uabc.edu.mx"></textarea>
+        <button id="fsubir">📤 Subir y publicar</button>
+        <button id="nota">🎤 Grabar nota de voz</button>
+        <button id="ldocs">🔄 Ver documentos</button>
+        <button id="lfb">📨 Ver feedbacks</button>
+        <button id="rep">📊 Reporte de uso</button>
         <div id="dlist"></div>
-        <span class="etiq">Borrar un documento</span>
+        <span class="etiq">🗑️ Borrar un documento</span>
         <input id="fdel" placeholder="Nombre del documento a borrar (Enter borra)">
-        <button id="bdel">Borrar</button>
+        <button id="bdel">🗑️ Borrar</button>
         <div id="fest"></div>
       </div>
     </div>
     <div class="bar">
-      <button id="mic">M</button>
+      <button id="mic">🎤</button>
       <input id="inp" placeholder="Escribe o dime tu pregunta...">
-      <button id="send" title="Enviar"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
-      <button id="fb" title="Reportar"><svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></button>
+      <button id="send">➤</button>
+      <button id="fb" title="¿No te resolvió? Repórtalo">🚩</button>
     </div>
   </main>
 </div>
@@ -931,42 +928,42 @@ function bubble(role, text, audio){
 
 const TEXTOS = {
   es: {
-    bienvenida: "Hola! Soy UABCBot Idiomas, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opcion o escribe/dime tu pregunta en espanol, ingles o frances.",
-    nota: "Personal docente: escribe o di administracion. Si una respuesta no te resuelve, toca Reportar.",
+    bienvenida: "👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.",
+    nota: "Personal docente: escribe o di \"administración\". Si una respuesta no te resuelve, toca 🚩.",
     sugerencias: [
-      {q: "Cuantos creditos necesito para titularme en Traduccion?", t: "Creditos para titularme"},
-      {q: "Cuales son los horarios del Centro de Ensenanza de Lenguas (CEC)?", t: "Horarios del CEC"},
-      {q: "Cuales son los requisitos de admision a la Facultad de Idiomas?", t: "Requisitos de admision"},
-      {q: "Que carreras y programas tecnicos ofrece la Facultad de Idiomas?", t: "Carreras y TSU"}
+      {q: "¿Cuántos créditos necesito para titularme en Traducción?", t: "💳 Créditos para titularme"},
+      {q: "¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t: "📅 Horarios del CEC"},
+      {q: "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t: "🎓 Requisitos de admisión"},
+      {q: "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t: "🏛️ Carreras y TSU"}
     ],
-    side_title: "Conversaciones",
-    side_new: "Nueva conversacion",
-    no_conversaciones: "Sin conversaciones aun."
+    side_title: "🗂️ Conversaciones",
+    side_new: "➕ Nueva conversación",
+    no_conversaciones: "Sin conversaciones aún."
   },
   en: {
-    bienvenida: "Hi! I am UABCBot Idiomas, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
-    nota: "Teaching staff: type or say administracion. If an answer does not solve your question, tap Report.",
+    bienvenida: " Hi! I'm <b>UABCBot Idiomas</b>, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
+    nota: "Teaching staff: type or say \"administración\". If an answer doesn't help you, tap 🚩.",
     sugerencias: [
-      {q: "How many credits do I need to graduate from Translation?", t: "Credits to graduate"},
-      {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "CEC schedules"},
-      {q: "What are the admission requirements for the Faculty of Languages?", t: "Admission requirements"},
-      {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "Degrees and TSU"}
+      {q: "How many credits do I need to graduate from Translation?", t: "💳 Credits to graduate"},
+      {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "📅 CEC schedules"},
+      {q: "What are the admission requirements for the Faculty of Languages?", t: "🎓 Admission requirements"},
+      {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "🏛️ Degrees and TSU"}
     ],
-    side_title: "Conversations",
-    side_new: "New conversation",
+    side_title: "🗂️ Conversations",
+    side_new: "➕ New conversation",
     no_conversaciones: "No conversations yet."
   },
   fr: {
-    bienvenida: "Bonjour! Je suis UABCBot Idiomas, l'assistant de la Faculte de Langues de l'UABC a Mexicali. Touchez une option ou ecrivez/dites-moi votre question en espagnol, anglais ou francais.",
-    nota: "Personnel enseignant: ecrivez ou dites administracion. Si une reponse ne vous aide pas, touchez Signaler.",
+    bienvenida: "👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>, l'assistant de la Faculté de Langues de l'UABC à Mexicali. Touchez une option ou écrivez/dites-moi votre question en espagnol, anglais ou français.",
+    nota: "Personnel enseignant : écrivez ou dites \"administración\". Si une réponse ne vous aide pas, touchez .",
     sugerencias: [
-      {q: "Combien de credits faut-il pour obtenir son diplome en Traduction?", t: "Credits pour diplomer"},
-      {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC)?", t: "Horaires du CEC"},
-      {q: "Quelles sont les conditions d'admission a la Faculte de Langues?", t: "Conditions d'admission"},
-      {q: "Quelles licences et programmes techniques offre la Faculte de Langues?", t: "Licences et TSU"}
+      {q: "Combien de crédits faut-il pour obtenir son diplôme en Traduction ?", t: "💳 Crédits pour diplômer"},
+      {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC) ?", t: "📅 Horaires du CEC"},
+      {q: "Quelles sont les conditions d'admission à la Faculté de Langues ?", t: "🎓 Conditions d'admission"},
+      {q: "Quelles licences et programmes techniques offre la Faculté de Langues ?", t: "🏛️ Licences et TSU"}
     ],
-    side_title: "Conversations",
-    side_new: "Nouvelle conversation",
+    side_title: "🗂️ Conversations",
+    side_new: "➕ Nouvelle conversation",
     no_conversaciones: "Aucune conversation pour le moment."
   }
 };
@@ -978,7 +975,7 @@ async function welcome(){
   try {
     const d = await (await fetch('/api/topfaq')).json();
     if (d && d.length) {
-      opts = d.map(x => ({q: x.q, t: "Popular: " + (x.q.length > 40 ? x.q.slice(0,40) + "..." : x.q)}));
+      opts = d.map(x => ({q: x.q, t: " " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
     }
   } catch(e) {}
   const d = document.createElement('div'); d.className = 'msg bot';
@@ -988,7 +985,7 @@ async function welcome(){
   chat.appendChild(d);
   d.querySelectorAll('[data-q]').forEach(b => b.onclick = () => send(b.dataset.q));
   try {
-    const audioResp = await fetch('/api/tts?lang=' + L + '&texto=' + encodeURIComponent(t.bienvenida));
+    const audioResp = await fetch('/api/tts?lang=' + L + '&texto=' + encodeURIComponent(t.bienvenida.replace(/<[^>]*>/g, '')));
     const audioData = await audioResp.json();
     if (audioData.url) {
       const au = document.createElement('audio');
@@ -1003,7 +1000,7 @@ async function welcome(){
 function thinking(){
   removeThink();
   const d = document.createElement('div'); d.className = 'msg bot think'; d.id = 'think';
-  d.innerHTML = '<div class="bub">Pensando... <span id="tsec">0</span> s</div>';
+  d.innerHTML = '<div class="bub">🤔 Trabajando en tu respuesta… <span id="tsec">0</span> s</div>';
   chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
   thinkSec = 0;
   thinkTimer = setInterval(() => { thinkSec++; const e = document.getElementById('tsec'); if (e) e.textContent = thinkSec; }, 1000);
@@ -1013,11 +1010,11 @@ function removeThink(){
   const t = document.getElementById('think'); if (t) t.remove();
 }
 function refreshWho(){
-  document.getElementById('who').innerText = currentUser ? 'Sesion: ' + currentUser + ' (tus conversaciones se guardan)' : 'Modo invitado: sin memoria de conversaciones.';
+  document.getElementById('who').innerText = currentUser ? '✅ Sesión: ' + currentUser + ' (tus conversaciones se guardan)' : ' Modo invitado: sin memoria de conversaciones.';
 }
 function saveConv(){
   if (!currentUser) return;
-  const titulo = ((hist.find(m => m.role === 'user') || {}).content || 'Nueva conversacion').slice(0, 40);
+  const titulo = ((hist.find(m => m.role === 'user') || {}).content || 'Nueva conversación').slice(0, 40);
   fetch('/api/conv/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: currentId, user: currentUser, titulo, msgs: hist})}).then(() => loadList());
 }
 async function loadList(){
@@ -1052,8 +1049,8 @@ async function send(msg){
   if (!msg.trim()) return;
   const esClave = state.pending;
   const el = bubble('user', msg);
-  hist.push({role:'user', content: esClave ? '******' : msg});
-  if (esClave) setTimeout(() => { el.querySelector('.bub').textContent = 'Clave'; }, 30000);
+  hist.push({role:'user', content: esClave ? '••••••' : msg});
+  if (esClave) setTimeout(() => { el.querySelector('.bub').textContent = '🔑 ••••••'; }, 30000);
   inp.value = '';
   lastPregunta = msg;
   thinking();
@@ -1090,31 +1087,31 @@ document.getElementById('nueva').onclick = nueva;
 document.getElementById('convs').onclick = () => { const d = document.getElementById('cdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; loadList(); };
 document.getElementById('user').onclick = () => { const d = document.getElementById('udrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; refreshWho(); };
 document.getElementById('fb').onclick = () => {
-  if (!lastRespuesta) { avisar('Aun no hay respuestas que reportar.', 'error'); return; }
+  if (!lastRespuesta) { avisar('⚠️ Aún no hay respuestas que reportar.', 'error'); return; }
   const d = document.getElementById('fbdrawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block';
 };
 document.getElementById('fbsend').onclick = async () => {
   await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pregunta: lastPregunta, respuesta: lastRespuesta, comentario: document.getElementById('fbcom').value, area: document.getElementById('fbarea').value})});
   document.getElementById('fbcom').value = '';
   document.getElementById('fbdrawer').style.display = 'none';
-  avisar('Gracias: tu reporte llego al responsable del area y alimentara al bot.', 'ok');
+  avisar('📨 Gracias: tu reporte llegó al responsable del área y alimentará al bot.', 'ok');
 };
 document.getElementById('ureg').onclick = async () => {
   const d = await (await fetch('/api/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
   if (!d.ok) { avisar(d.error, 'error'); return; }
   currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
   refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
-  avisar('Bienvenido, ' + currentUser + '. Tus conversaciones se guardaran.', 'ok');
+  avisar('✅ Bienvenido, ' + currentUser + '. Tus conversaciones se guardarán.', 'ok');
 };
 document.getElementById('ulin').onclick = async () => {
   const d = await (await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({usuario: document.getElementById('uusr').value, clave: document.getElementById('ukey').value})})).json();
   if (!d.ok) { avisar(d.error, 'error'); return; }
   currentUser = d.usuario; localStorage.setItem('uabc_user', currentUser);
   refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none';
-  avisar('Sesion iniciada: ' + currentUser, 'ok');
+  avisar('✅ Sesión iniciada: ' + currentUser, 'ok');
 };
 document.getElementById('uguest').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
-document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('Sesion cerrada.'); };
+document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
 
 [['auto','auto'],['es','es'],['en','en'],['fr','fr']].forEach(([id, val]) => {
   document.getElementById('L' + id).onclick = () => applyLang(val);
@@ -1123,12 +1120,12 @@ document.getElementById('uout').onclick = () => { currentUser = ""; localStorage
 document.getElementById('fmas').onclick = () => {
   fontScale = Math.min(2.0, fontScale + 0.1);
   document.documentElement.style.setProperty('--fs', fontScale);
-  avisar('Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
+  avisar('🔍 Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
 };
 document.getElementById('fmenos').onclick = () => {
   fontScale = Math.max(0.8, fontScale - 0.1);
   document.documentElement.style.setProperty('--fs', fontScale);
-  avisar('Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
+  avisar('🔍 Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
 };
 
 document.getElementById('full').onclick = () => {
@@ -1142,8 +1139,8 @@ document.getElementById('full').onclick = () => {
 const drop = document.getElementById('drop');
 function marcarArchivo(f){
   droppedFile = f;
-  drop.innerHTML = 'Archivo: ' + esc(f.name);
-  avisar('Archivo listo: ' + f.name + ' - pulsa Subir y publicar.');
+  drop.innerHTML = '📎 ' + esc(f.name);
+  avisar(' Archivo listo: ' + f.name + ' → pulsa "📤 Subir y publicar".');
 }
 drop.onclick = () => document.getElementById('ffile').click();
 drop.ondragover = e => e.preventDefault();
@@ -1165,12 +1162,12 @@ mic.onclick = async () => {
     fd.append('lang', langPref);
     const d = await (await fetch('/api/voice', {method:'POST', body: fd})).json();
     removeThink(); state = d.state;
-    if (d.texto) { bubble('user', 'Voz: ' + d.texto); hist.push({role:'user', content: d.texto}); lastPregunta = d.texto; }
+    if (d.texto) { bubble('user', '🎤 ' + d.texto); hist.push({role:'user', content: d.texto}); lastPregunta = d.texto; }
     if (d.reply) { bubble('bot', d.reply, d.audio); hist.push({role:'assistant', content: d.reply, audio: d.audio}); lastRespuesta = d.reply; }
     saveConv();
   };
   rec.start(); mic.classList.add('rec');
-  avisar('Grabando tu pregunta... toca el microfono para terminar.');
+  avisar('🎤 Grabando tu pregunta… toca el micrófono para terminar.');
 };
 document.getElementById('gear').onclick = () => { const d = document.getElementById('drawer'); d.style.display = d.style.display === 'block' ? 'none' : 'block'; };
 document.getElementById('salirp').onclick = () => { state = {pending:false, active:false}; document.getElementById('drawer').style.display = 'none'; document.getElementById('zona').style.display = 'none'; };
@@ -1180,13 +1177,13 @@ document.getElementById('unlock').onclick = async () => {
   const r = await fetch('/api/unlock', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})});
   const d = await r.json();
   document.getElementById('zona').style.display = d.ok ? 'block' : 'none';
-  if (d.ok) { loadDocs(); avisar('Panel de personal abierto.', 'ok'); }
-  else avisar('Clave incorrecta.', 'error');
+  if (d.ok) { loadDocs(); avisar('✅ Panel de personal abierto.', 'ok'); }
+  else avisar('❌ Clave incorrecta.', 'error');
 };
 document.getElementById('fsubir').onclick = async () => {
   const f = document.getElementById('ffile').files[0] || droppedFile;
-  if (!f && !document.getElementById('ftexto').value.trim()) { avisar('Elige un archivo o pega el texto del aviso en el cuadro.', 'error'); return; }
-  avisar('Procesando y publicando... puede tardar unos segundos.');
+  if (!f && !document.getElementById('ftexto').value.trim()) { avisar('⚠️ Elige un archivo o pega el texto del aviso en el cuadro 📝.', 'error'); return; }
+  avisar('⏳ Procesando y publicando… puede tardar unos segundos.');
   const fd = new FormData();
   if (f) fd.append('archivo', f);
   fd.append('categoria', document.getElementById('fcat').value);
@@ -1195,19 +1192,19 @@ document.getElementById('fsubir').onclick = async () => {
   fd.append('texto_manual', document.getElementById('ftexto').value);
   const d = await (await fetch('/api/upload', {method:'POST', body: fd})).json();
   document.getElementById('fest').innerText = d.estado;
-  avisar(d.estado, d.estado.startsWith('Guardado') ? 'ok' : 'error');
+  avisar(d.estado, d.estado.startsWith('✅') ? 'ok' : 'error');
   loadDocs();
 };
 document.getElementById('ldocs').onclick = loadDocs;
 document.getElementById('lfb').onclick = async () => {
   const d = await (await fetch('/api/feedback/list?clave=' + encodeURIComponent(document.getElementById('clave').value))).json();
   document.getElementById('fest').innerText = (d.items || []).join('\\n------------------\\n');
-  avisar('Feedbacks listados abajo.', 'ok');
+  avisar('📨 Feedbacks listados abajo.', 'ok');
 };
 document.getElementById('bdel').onclick = async () => {
   const d = await (await fetch('/api/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value, nombre: document.getElementById('fdel').value})})).json();
   document.getElementById('fest').innerText = d.estado;
-  avisar(d.estado, d.estado.includes('eliminado') ? 'ok' : 'error');
+  avisar(d.estado, d.estado.startsWith('🗑️') ? 'ok' : 'error');
   loadDocs();
 };
 document.getElementById('nota').onclick = async () => {
@@ -1217,24 +1214,24 @@ document.getElementById('nota').onclick = async () => {
   rec2.ondataavailable = e => ch.push(e.data);
   rec2.onstop = async () => {
     stream.getTracks().forEach(t => t.stop());
-    avisar('Transcribiendo y publicando tu nota...');
+    avisar(' Transcribiendo y publicando tu nota…');
     const fd = new FormData();
     fd.append('audio', new Blob(ch, {type:'audio/webm'}), 'nota.webm');
     fd.append('categoria', document.getElementById('fcat').value);
     const d = await (await fetch('/api/voice_note', {method:'POST', body: fd})).json();
     document.getElementById('fest').innerText = d.estado;
-    avisar(d.estado, d.estado.includes('publicada') ? 'ok' : 'error');
+    avisar(d.estado, d.estado.startsWith('✅') ? 'ok' : 'error');
     loadDocs();
   };
   rec2.start();
-  avisar('Grabando nota... toca de nuevo para terminar y publicar.');
+  avisar('🔴 Grabando nota… toca de nuevo para terminar y publicar.');
 };
 document.getElementById('rep').onclick = async () => {
   const d = await (await fetch('/api/report', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({clave: document.getElementById('clave').value})})).json();
   if (d.error) { avisar(d.error, 'error'); return; }
-  document.getElementById('fest').innerText = 'Total: ' + d.total + ' - Hoy: ' + d.hoy + ' - Idiomas: ' + JSON.stringify(d.idiomas)
-    + '\\n\\nMas frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
-  avisar('Reporte listo en el panel.', 'ok');
+  document.getElementById('fest').innerText = '📊 Total: ' + d.total + ' · Hoy: ' + d.hoy + ' · Idiomas: ' + JSON.stringify(d.idiomas)
+    + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
+  avisar('📊 Reporte listo en el panel.', 'ok');
 };
 welcome(); loadList(); refreshWho(); inp.focus();
 </script>
