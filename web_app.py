@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
 
-VERSION = "v21-2026-08-23"
+VERSION = "v22-2026-08-23"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
@@ -794,8 +794,10 @@ PAGINA = """
   @keyframes pulso { 50% { transform: scale(1.12); } }
   #inp { flex: 1; border: 1px solid #cfd8dc; border-radius: 999px; padding: 12px 18px; font-size: calc(15px * var(--fs, 1)); outline: none; }
   #inp:focus { border-color: #00855f; }
-  #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: #f7941d; color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; }
-  #fb { width: 46px; height: 46px; border-radius: 50%; border: none; background: #d32f2f; color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; }
+  #send { width: 46px; height: 46px; border-radius: 50%; border: none; background: #f7941d; color: #fff; font-size: 18px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  #send svg { width: 22px; height: 22px; fill: currentColor; }
+  #fb { width: 46px; height: 46px; border-radius: 50%; border: none; background: #d32f2f; color: #fff; font-size: 17px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  #fb svg { width: 22px; height: 22px; fill: currentColor; }
   #gear { position: fixed; right: 10px; top: 74px; background: rgba(0,0,0,.25); border: none; color: #fff; border-radius: 50%; width: 30px; height: 30px; cursor: pointer; z-index: 5; }
   #convs { display: none; }
   .drawer { display: none; background: #fff; margin: 0 12px 8px; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: 13px; max-height: 60vh; overflow-y: auto; }
@@ -900,8 +902,8 @@ PAGINA = """
     <div class="bar">
       <button id="mic">M</button>
       <input id="inp" placeholder="Escribe o dime tu pregunta...">
-      <button id="send">E</button>
-      <button id="fb" title="No te resolvio? Reportalo">R</button>
+      <button id="send" title="Enviar"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+      <button id="fb" title="Reportar"><svg viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></button>
     </div>
   </main>
 </div>
@@ -938,7 +940,8 @@ const TEXTOS = {
       {q: "Que carreras y programas tecnicos ofrece la Facultad de Idiomas?", t: "Carreras y TSU"}
     ],
     side_title: "Conversaciones",
-    side_new: "Nueva conversacion"
+    side_new: "Nueva conversacion",
+    no_conversaciones: "Sin conversaciones aun."
   },
   en: {
     bienvenida: "Hi! I am UABCBot Idiomas, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
@@ -950,7 +953,8 @@ const TEXTOS = {
       {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "Degrees and TSU"}
     ],
     side_title: "Conversations",
-    side_new: "New conversation"
+    side_new: "New conversation",
+    no_conversaciones: "No conversations yet."
   },
   fr: {
     bienvenida: "Bonjour! Je suis UABCBot Idiomas, l'assistant de la Faculte de Langues de l'UABC a Mexicali. Touchez une option ou ecrivez/dites-moi votre question en espagnol, anglais ou francais.",
@@ -962,7 +966,8 @@ const TEXTOS = {
       {q: "Quelles licences et programmes techniques offre la Faculte de Langues?", t: "Licences et TSU"}
     ],
     side_title: "Conversations",
-    side_new: "Nouvelle conversation"
+    side_new: "Nouvelle conversation",
+    no_conversaciones: "Aucune conversation pour le moment."
   }
 };
 
@@ -1016,16 +1021,18 @@ function saveConv(){
   fetch('/api/conv/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: currentId, user: currentUser, titulo, msgs: hist})}).then(() => loadList());
 }
 async function loadList(){
+  const L = langPref === 'auto' ? 'es' : langPref;
+  const t = TEXTOS[L] || TEXTOS.es;
   if (!currentUser) {
-    const msg = '<small>Invitado: sin memoria. Registrarte para guardar tus conversaciones.</small>';
+    const msg = '<small>' + t.no_conversaciones + '</small>';
     document.getElementById('lista').innerHTML = msg;
     document.getElementById('lista2').innerHTML = msg;
     return;
   }
   const d = await (await fetch('/api/conv/list?user=' + encodeURIComponent(currentUser))).json();
   const html = d.map(c => '<button class="item" data-id="' + c.id + '">' + esc(c.titulo) + '</button>').join('');
-  document.getElementById('lista').innerHTML = html || '<small>Sin conversaciones aun.</small>';
-  document.getElementById('lista2').innerHTML = html || '<small>Sin conversaciones aun.</small>';
+  document.getElementById('lista').innerHTML = html || '<small>' + t.no_conversaciones + '</small>';
+  document.getElementById('lista2').innerHTML = html || '<small>' + t.no_conversaciones + '</small>';
   document.querySelectorAll('[data-id]').forEach(b => b.onclick = () => openConv(b.dataset.id));
 }
 async function openConv(id){
@@ -1073,6 +1080,7 @@ function applyLang(newLang){
   
   chat.innerHTML = '';
   welcome();
+  loadList();
 }
 
 document.getElementById('send').onclick = () => send(inp.value);
