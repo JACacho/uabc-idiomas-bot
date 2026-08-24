@@ -928,42 +928,42 @@ function bubble(role, text, audio){
 
 const TEXTOS = {
   es: {
-    bienvenida: "👋 ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.",
-    nota: "Personal docente: escribe o di \"administración\". Si una respuesta no te resuelve, toca 🚩.",
+    bienvenida: "\ud83d\udc4b \u00a1Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opci\u00f3n o escribe/dime tu pregunta en espa\u00f1ol, ingl\u00e9s o franc\u00e9s.",
+    nota: "Personal docente: escribe o di \"administraci\u00f3n\". Si una respuesta no te resuelve, toca \ud83d\udea9.",
     sugerencias: [
-      {q: "¿Cuántos créditos necesito para titularme en Traducción?", t: "💳 Créditos para titularme"},
-      {q: "¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t: "📅 Horarios del CEC"},
-      {q: "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t: "🎓 Requisitos de admisión"},
-      {q: "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t: "🏛️ Carreras y TSU"}
+      {q: "\u00bfCu\u00e1ntos cr\u00e9ditos necesito para titularme en Traducci\u00f3n?", t: "\ud83d\udcb3 Cr\u00e9ditos para titularme"},
+      {q: "\u00bfCu\u00e1les son los horarios del Centro de Ense\u00f1anza de Lenguas (CEC)?", t: "\ud83d\udcc5 Horarios del CEC"},
+      {q: "\u00bfCu\u00e1les son los requisitos de admisi\u00f3n a la Facultad de Idiomas?", t: "\ud83c\udf93 Requisitos de admisi\u00f3n"},
+      {q: "\u00bfQu\u00e9 carreras y programas t\u00e9cnicos ofrece la Facultad de Idiomas?", t: "\ud83c\udfdb\ufe0f Carreras y TSU"}
     ],
-    side_title: "🗂️ Conversaciones",
-    side_new: "➕ Nueva conversación",
-    no_conversaciones: "Sin conversaciones aún."
+    side_title: "\ud83d\uddc2\ufe0f Conversaciones",
+    side_new: "\u2795 Nueva conversaci\u00f3n",
+    no_conversaciones: "Sin conversaciones a\u00fan."
   },
   en: {
-    bienvenida: " Hi! I'm <b>UABCBot Idiomas</b>, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
-    nota: "Teaching staff: type or say \"administración\". If an answer doesn't help you, tap 🚩.",
+    bienvenida: "Hi! I'm <b>UABCBot Idiomas</b>, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
+    nota: "Teaching staff: type or say \"administraci\u00f3n\". If an answer doesn't help you, tap \ud83d\udea9.",
     sugerencias: [
-      {q: "How many credits do I need to graduate from Translation?", t: "💳 Credits to graduate"},
-      {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "📅 CEC schedules"},
-      {q: "What are the admission requirements for the Faculty of Languages?", t: "🎓 Admission requirements"},
-      {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "🏛️ Degrees and TSU"}
+      {q: "How many credits do I need to graduate from Translation?", t: "\ud83d\udcb3 Credits to graduate"},
+      {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "\ud83d\udcc5 CEC schedules"},
+      {q: "What are the admission requirements for the Faculty of Languages?", t: "\ud83c\udf93 Admission requirements"},
+      {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "\ud83c\udfdb\ufe0f Degrees and TSU"}
     ],
-    side_title: "🗂️ Conversations",
-    side_new: "➕ New conversation",
+    side_title: "\ud83d\uddc2\ufe0f Conversations",
+    side_new: "\u2795 New conversation",
     no_conversaciones: "No conversations yet."
   },
   fr: {
-    bienvenida: "👋 Bonjour ! Je suis <b>UABCBot Idiomas</b>, l'assistant de la Faculté de Langues de l'UABC à Mexicali. Touchez une option ou écrivez/dites-moi votre question en espagnol, anglais ou français.",
-    nota: "Personnel enseignant : écrivez ou dites \"administración\". Si une réponse ne vous aide pas, touchez .",
+    bienvenida: "Bonjour ! Je suis <b>UABCBot Idiomas</b>, l'assistant de la Facult\u00e9 de Langues de l'UABC \u00e0 Mexicali. Touchez une option ou \u00e9crivez/dites-moi votre question en espagnol, anglais ou fran\u00e7ais.",
+    nota: "Personnel enseignant : \u00e9crivez ou dites \"administraci\u00f3n\". Si une r\u00e9ponse ne vous aide pas, touchez \ud83d\udea9.",
     sugerencias: [
-      {q: "Combien de crédits faut-il pour obtenir son diplôme en Traduction ?", t: "💳 Crédits pour diplômer"},
-      {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC) ?", t: "📅 Horaires du CEC"},
-      {q: "Quelles sont les conditions d'admission à la Faculté de Langues ?", t: "🎓 Conditions d'admission"},
-      {q: "Quelles licences et programmes techniques offre la Faculté de Langues ?", t: "🏛️ Licences et TSU"}
+      {q: "Combien de cr\u00e9dits faut-il pour obtenir son dipl\u00f4me en Traduction ?", t: "\ud83d\udcb3 Cr\u00e9dits pour dipl\u00f4mer"},
+      {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC) ?", t: "\ud83d\udcc5 Horaires du CEC"},
+      {q: "Quelles sont les conditions d'admission \u00e0 la Facult\u00e9 de Langues ?", t: "\ud83c\udf93 Conditions d'admission"},
+      {q: "Quelles licences et programmes techniques offre la Facult\u00e9 de Langues ?", t: "\ud83c\udfdb\ufe0f Licences et TSU"}
     ],
-    side_title: "🗂️ Conversations",
-    side_new: "➕ Nouvelle conversation",
+    side_title: "\ud83d\uddc2\ufe0f Conversations",
+    side_new: "\u2795 Nouvelle conversation",
     no_conversaciones: "Aucune conversation pour le moment."
   }
 };
