@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
 
-VERSION = "v22.1-2026-08-23"
+VERSION = "v20-2026-08-20"
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
@@ -754,23 +754,19 @@ PAGINA = """
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
   body { background: #eef1f4; }
   #toast { display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); color: #fff; padding: 13px 22px; border-radius: 14px; font-size: 14.5px; z-index: 99; box-shadow: 0 4px 16px rgba(0,0,0,.35); max-width: 92%; text-align: center; }
-  .wrap { width: 100%; margin: 0; height: 100vh; display: flex; flex-direction: row; }
-  #side { width: 280px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex-shrink: 0; }
+  .wrap { max-width: 1000px; margin: 0 auto; height: 100vh; display: flex; flex-direction: row; }
+  #side { width: 260px; background: #004d38; color: #fff; padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
   #side b { font-size: 14px; }
-  #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; display: flex; align-items: center; }
+  #side button { background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 10px; padding: 9px 10px; text-align: left; cursor: pointer; font-size: 12.5px; }
   #side button:hover { background: rgba(255,255,255,.25); }
-  main { flex: 1; display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+  main { flex: 1; display: flex; flex-direction: column; height: 100vh; }
   header { background: linear-gradient(135deg, #00684a, #00855f); color: #fff; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-radius: 0 0 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,.15); flex-wrap: wrap; }
   header img { width: 54px; height: 54px; background: #fff; border-radius: 12px; padding: 3px; }
   header h1 { font-size: 17px; } header p { font-size: 12px; opacity: .85; }
   .langs { display: flex; gap: 5px; margin-left: 14px; flex-wrap: wrap; }
   .langs button { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: transparent; color: #fff; cursor: pointer; }
   .langs button.on { background: #f7941d; border-color: #f7941d; font-weight: 700; }
-  .utils { display: flex; gap: 5px; margin-left: auto; }
-  .utils button { font-size: 14px; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.5); background: rgba(255,255,255,.15); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; }
-  .utils button:hover { background: rgba(255,255,255,.3); }
-  .utils button svg { width: 18px; height: 18px; fill: currentColor; }
-  .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+  .hbtn { background: rgba(255,255,255,.15); border: none; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; font-size: 16px; }
   #nuevo { margin-left: auto; }
   #chat { flex: 1; overflow-y: auto; padding: 16px 12px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 82%; display: flex; flex-direction: column; gap: 4px; }
@@ -820,11 +816,8 @@ PAGINA = """
 <div id="toast"></div>
 <div class="wrap">
   <aside id="side">
-    <b id="side_title">🗂️ Conversaciones</b>
-    <button id="nueva">
-      <svg style="width:16px;height:16px;margin-right:6px" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-      <span id="side_new">➕ Nueva conversación</span>
-    </button>
+    <b>️ Conversaciones</b>
+    <button id="nueva">➕ Nueva conversación</button>
     <div id="lista"></div>
   </aside>
   <main>
@@ -834,30 +827,25 @@ PAGINA = """
       <div class="langs">
         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
       </div>
-      <div class="utils">
-        <button id="fmenos" title="Reducir letra"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg></button>
-        <button id="fmas" title="Aumentar letra"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
-        <button id="full" title="Pantalla completa"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
-      </div>
       <button id="convs" class="hbtn" title="Conversaciones">🗂️</button>
       <button id="user" class="hbtn" title="Tu cuenta">👤</button>
       <button id="nuevo" class="hbtn" title="Nueva conversación">🧹</button>
     </header>
     <button id="gear" title="Personal autorizado">⚙️</button>
-    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b id="side_title2">🗂️ Conversaciones</b><div id="lista2"></div></div>
-    <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
-      <b>👤 Tu cuenta</b>
+    <div id="cdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button><b>🗂️ Conversaciones</b><div id="lista2"></div></div>
+    <div id="udrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'"> Cerrar</button>
+      <b> Tu cuenta</b>
       <div id="who"></div>
       <input id="uusr" placeholder="Usuario o correo">
       <input id="ukey" type="password" placeholder="Clave">
       <button id="ureg">✨ Registrarme</button>
-      <button id="ulin"> Entrar</button>
-      <button id="uguest">👋 Seguir como invitado</button>
-      <button id="uout"> Cerrar sesión</button>
+      <button id="ulin">🔑 Entrar</button>
+      <button id="uguest"> Seguir como invitado</button>
+      <button id="uout">🚪 Cerrar sesión</button>
     </div>
     <div id="chat"></div>
-    <div id="fbdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
-      <b>🚩 Reportar respuesta no resuelta</b>
+    <div id="fbdrawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'"> Cerrar</button>
+      <b> Reportar respuesta no resuelta</b>
       <span class="etiq">Área responsable</span>
       <select id="fbarea">
         <option>Admisión</option><option>CEC</option><option>Escolar/Escolaridad</option><option>Egresados/Bolsa de trabajo</option><option>Eventos</option><option>Otro</option>
@@ -866,17 +854,17 @@ PAGINA = """
       <textarea id="fbcom" rows="3" placeholder="Ej. No me dijo la fecha exacta del examen de admisión..."></textarea>
       <button id="fbsend">📨 Enviar al responsable</button>
     </div>
-    <div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'">✖ Cerrar</button>
-      <b>🛠️ Panel de personal</b>
+    <div id="drawer" class="drawer"><button class="xbtn" onclick="this.parentNode.style.display='none'"> Cerrar</button>
+      <b>️ Panel de personal</b>
       <input id="clave" type="password" placeholder="Clave de acceso (Enter para entrar)">
       <button id="unlock">🔓 Entrar</button>
-      <button id="salirp">🚪 Salir del panel</button>
+      <button id="salirp"> Salir del panel</button>
       <div id="zona" style="display:none">
-        <span class="etiq">1️ Categoría del aviso</span>
+        <span class="etiq">1️⃣ Categoría del aviso</span>
         <select id="fcat">
           <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option>
         </select>
-        <span class="etiq">2️ Vigente hasta (opcional)</span>
+        <span class="etiq">2️⃣ Vigente hasta (opcional)</span>
         <input id="fvig" type="date">
         <span class="etiq">3️⃣ Elige o arrastra el archivo (TXT, PDF o imagen)</span>
         <div id="drop">📥 Arrastra aquí tu documento o póster<br><small>o toca para elegirlo</small></div>
@@ -885,12 +873,12 @@ PAGINA = """
         <div class="ayuda">Si subes una IMAGEN y el motor de visión está saturado, copia y pega aquí lo que dice el póster (evento, fecha, hora, lugar) y se publicará al instante sin esperar.</div>
         <textarea id="ftexto" rows="4" placeholder="Ejemplo: Plática para Potenciales a Egresar. Martes 18 de agosto, 12:00 y 16:00 hrs, Sala de Usos Múltiples. Informes: Mtra. Dulce Rodríguez, egresados__idiomas__mxl@uabc.edu.mx"></textarea>
         <button id="fsubir">📤 Subir y publicar</button>
-        <button id="nota">🎤 Grabar nota de voz</button>
+        <button id="nota"> Grabar nota de voz</button>
         <button id="ldocs">🔄 Ver documentos</button>
         <button id="lfb">📨 Ver feedbacks</button>
         <button id="rep">📊 Reporte de uso</button>
         <div id="dlist"></div>
-        <span class="etiq">🗑️ Borrar un documento</span>
+        <span class="etiq">️ Borrar un documento</span>
         <input id="fdel" placeholder="Nombre del documento a borrar (Enter borra)">
         <button id="bdel">🗑️ Borrar</button>
         <div id="fest"></div>
@@ -928,43 +916,34 @@ function bubble(role, text, audio){
 
 const TEXTOS = {
   es: {
-    bienvenida: "\ud83d\udc4b \u00a1Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opci\u00f3n o escribe/dime tu pregunta en espa\u00f1ol, ingl\u00e9s o franc\u00e9s.",
-    nota: "Personal docente: escribe o di \"administraci\u00f3n\". Si una respuesta no te resuelve, toca \ud83d\udea9.",
+    bienvenida: " ¡Hola! Soy <b>UABCBot Idiomas</b>, el asistente de la Facultad de Idiomas de la UABC en Mexicali. Toca una opción o escribe/dime tu pregunta en español, inglés o francés.",
+    nota: "Personal docente: escribe o di \"administración\". Si una respuesta no te resuelve, toca 🚩.",
     sugerencias: [
-      {q: "\u00bfCu\u00e1ntos cr\u00e9ditos necesito para titularme en Traducci\u00f3n?", t: "\ud83d\udcb3 Cr\u00e9ditos para titularme"},
-      {q: "\u00bfCu\u00e1les son los horarios del Centro de Ense\u00f1anza de Lenguas (CEC)?", t: "\ud83d\udcc5 Horarios del CEC"},
-      {q: "\u00bfCu\u00e1les son los requisitos de admisi\u00f3n a la Facultad de Idiomas?", t: "\ud83c\udf93 Requisitos de admisi\u00f3n"},
-      {q: "\u00bfQu\u00e9 carreras y programas t\u00e9cnicos ofrece la Facultad de Idiomas?", t: "\ud83c\udfdb\ufe0f Carreras y TSU"}
-    ],
-    side_title: "\ud83d\uddc2\ufe0f Conversaciones",
-    side_new: "\u2795 Nueva conversaci\u00f3n",
-    no_conversaciones: "Sin conversaciones a\u00fan."
+      {q: "¿Cuántos créditos necesito para titularme en Traducción?", t: "💳 Créditos para titularme"},
+      {q: "¿Cuáles son los horarios del Centro de Enseñanza de Lenguas (CEC)?", t: "📅 Horarios del CEC"},
+      {q: "¿Cuáles son los requisitos de admisión a la Facultad de Idiomas?", t: "🎓 Requisitos de admisión"},
+      {q: "¿Qué carreras y programas técnicos ofrece la Facultad de Idiomas?", t: "🏛️ Carreras y TSU"}
+    ]
   },
   en: {
     bienvenida: "Hi! I'm <b>UABCBot Idiomas</b>, the assistant of the Faculty of Languages of UABC in Mexicali. Tap an option or type/tell me your question in Spanish, English or French.",
-    nota: "Teaching staff: type or say \"administraci\u00f3n\". If an answer doesn't help you, tap \ud83d\udea9.",
+    nota: "Teaching staff: type or say \"administración\". If an answer doesn't help you, tap 🚩.",
     sugerencias: [
-      {q: "How many credits do I need to graduate from Translation?", t: "\ud83d\udcb3 Credits to graduate"},
-      {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "\ud83d\udcc5 CEC schedules"},
-      {q: "What are the admission requirements for the Faculty of Languages?", t: "\ud83c\udf93 Admission requirements"},
-      {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "\ud83c\udfdb\ufe0f Degrees and TSU"}
-    ],
-    side_title: "\ud83d\uddc2\ufe0f Conversations",
-    side_new: "\u2795 New conversation",
-    no_conversaciones: "No conversations yet."
+      {q: "How many credits do I need to graduate from Translation?", t: "💳 Credits to graduate"},
+      {q: "What are the schedules of the Language Teaching Center (CEC)?", t: "📅 CEC schedules"},
+      {q: "What are the admission requirements for the Faculty of Languages?", t: "🎓 Admission requirements"},
+      {q: "What degrees and technical programs does the Faculty of Languages offer?", t: "🏛️ Degrees and TSU"}
+    ]
   },
   fr: {
-    bienvenida: "Bonjour ! Je suis <b>UABCBot Idiomas</b>, l'assistant de la Facult\u00e9 de Langues de l'UABC \u00e0 Mexicali. Touchez une option ou \u00e9crivez/dites-moi votre question en espagnol, anglais ou fran\u00e7ais.",
-    nota: "Personnel enseignant : \u00e9crivez ou dites \"administraci\u00f3n\". Si une r\u00e9ponse ne vous aide pas, touchez \ud83d\udea9.",
+    bienvenida: "Bonjour ! Je suis <b>UABCBot Idiomas</b>, l'assistant de la Faculté de Langues de l'UABC à Mexicali. Touchez une option ou écrivez/dites-moi votre question en espagnol, anglais ou français.",
+    nota: "Personnel enseignant : écrivez ou dites \"administración\". Si une réponse ne vous aide pas, touchez 🚩.",
     sugerencias: [
-      {q: "Combien de cr\u00e9dits faut-il pour obtenir son dipl\u00f4me en Traduction ?", t: "\ud83d\udcb3 Cr\u00e9dits pour dipl\u00f4mer"},
-      {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC) ?", t: "\ud83d\udcc5 Horaires du CEC"},
-      {q: "Quelles sont les conditions d'admission \u00e0 la Facult\u00e9 de Langues ?", t: "\ud83c\udf93 Conditions d'admission"},
-      {q: "Quelles licences et programmes techniques offre la Facult\u00e9 de Langues ?", t: "\ud83c\udfdb\ufe0f Licences et TSU"}
-    ],
-    side_title: "\ud83d\uddc2\ufe0f Conversations",
-    side_new: "\u2795 Nouvelle conversation",
-    no_conversaciones: "Aucune conversation pour le moment."
+      {q: "Combien de crédits faut-il pour obtenir son diplôme en Traduction ?", t: "💳 Crédits pour diplômer"},
+      {q: "Quels sont les horaires du Centre d'Enseignement des Langues (CEC) ?", t: " Horaires du CEC"},
+      {q: "Quelles sont les conditions d'admission à la Faculté de Langues ?", t: "🎓 Conditions d'admission"},
+      {q: "Quelles licences et programmes techniques offre la Faculté de Langues ?", t: "🏛️ Licences et TSU"}
+    ]
   }
 };
 
@@ -975,7 +954,7 @@ async function welcome(){
   try {
     const d = await (await fetch('/api/topfaq')).json();
     if (d && d.length) {
-      opts = d.map(x => ({q: x.q, t: " " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
+      opts = d.map(x => ({q: x.q, t: "🔥 " + (x.q.length > 40 ? x.q.slice(0,40) + "…" : x.q)}));
     }
   } catch(e) {}
   const d = document.createElement('div'); d.className = 'msg bot';
@@ -1010,7 +989,7 @@ function removeThink(){
   const t = document.getElementById('think'); if (t) t.remove();
 }
 function refreshWho(){
-  document.getElementById('who').innerText = currentUser ? '✅ Sesión: ' + currentUser + ' (tus conversaciones se guardan)' : ' Modo invitado: sin memoria de conversaciones.';
+  document.getElementById('who').innerText = currentUser ? '✅ Sesión: ' + currentUser + ' (tus conversaciones se guardan)' : '👋 Modo invitado: sin memoria de conversaciones.';
 }
 function saveConv(){
   if (!currentUser) return;
@@ -1018,18 +997,16 @@ function saveConv(){
   fetch('/api/conv/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: currentId, user: currentUser, titulo, msgs: hist})}).then(() => loadList());
 }
 async function loadList(){
-  const L = langPref === 'auto' ? 'es' : langPref;
-  const t = TEXTOS[L] || TEXTOS.es;
   if (!currentUser) {
-    const msg = '<small>' + t.no_conversaciones + '</small>';
+    const msg = '<small>👋 Invitado: sin memoria. Regístrate con 👤 para guardar tus conversaciones.</small>';
     document.getElementById('lista').innerHTML = msg;
     document.getElementById('lista2').innerHTML = msg;
     return;
   }
   const d = await (await fetch('/api/conv/list?user=' + encodeURIComponent(currentUser))).json();
   const html = d.map(c => '<button class="item" data-id="' + c.id + '">' + esc(c.titulo) + '</button>').join('');
-  document.getElementById('lista').innerHTML = html || '<small>' + t.no_conversaciones + '</small>';
-  document.getElementById('lista2').innerHTML = html || '<small>' + t.no_conversaciones + '</small>';
+  document.getElementById('lista').innerHTML = html || '<small>Sin conversaciones aún.</small>';
+  document.getElementById('lista2').innerHTML = html || '<small>Sin conversaciones aún.</small>';
   document.querySelectorAll('[data-id]').forEach(b => b.onclick = () => openConv(b.dataset.id));
 }
 async function openConv(id){
@@ -1069,15 +1046,8 @@ function applyLang(newLang){
   langPref = newLang;
   document.querySelectorAll('.langs button').forEach(b => b.classList.remove('on'));
   document.getElementById('L' + (newLang === 'auto' ? 'auto' : newLang)).classList.add('on');
-  
-  const t = TEXTOS[newLang === 'auto' ? 'es' : newLang] || TEXTOS.es;
-  document.getElementById('side_title').textContent = t.side_title;
-  document.getElementById('side_title2').textContent = t.side_title;
-  document.getElementById('side_new').textContent = t.side_new;
-  
   chat.innerHTML = '';
   welcome();
-  loadList();
 }
 
 document.getElementById('send').onclick = () => send(inp.value);
@@ -1111,30 +1081,11 @@ document.getElementById('ulin').onclick = async () => {
   avisar('✅ Sesión iniciada: ' + currentUser, 'ok');
 };
 document.getElementById('uguest').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; };
-document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar('👋 Sesión cerrada.'); };
+document.getElementById('uout').onclick = () => { currentUser = ""; localStorage.removeItem('uabc_user'); refreshWho(); loadList(); document.getElementById('udrawer').style.display = 'none'; avisar(' Sesión cerrada.'); };
 
 [['auto','auto'],['es','es'],['en','en'],['fr','fr']].forEach(([id, val]) => {
   document.getElementById('L' + id).onclick = () => applyLang(val);
 });
-
-document.getElementById('fmas').onclick = () => {
-  fontScale = Math.min(2.0, fontScale + 0.1);
-  document.documentElement.style.setProperty('--fs', fontScale);
-  avisar('🔍 Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
-};
-document.getElementById('fmenos').onclick = () => {
-  fontScale = Math.max(0.8, fontScale - 0.1);
-  document.documentElement.style.setProperty('--fs', fontScale);
-  avisar('🔍 Letra: ' + Math.round(fontScale * 100) + '%', 'ok');
-};
-
-document.getElementById('full').onclick = () => {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen();
-  } else {
-    document.exitFullscreen();
-  }
-};
 
 const drop = document.getElementById('drop');
 function marcarArchivo(f){
@@ -1183,7 +1134,7 @@ document.getElementById('unlock').onclick = async () => {
 document.getElementById('fsubir').onclick = async () => {
   const f = document.getElementById('ffile').files[0] || droppedFile;
   if (!f && !document.getElementById('ftexto').value.trim()) { avisar('⚠️ Elige un archivo o pega el texto del aviso en el cuadro 📝.', 'error'); return; }
-  avisar('⏳ Procesando y publicando… puede tardar unos segundos.');
+  avisar(' Procesando y publicando… puede tardar unos segundos.');
   const fd = new FormData();
   if (f) fd.append('archivo', f);
   fd.append('categoria', document.getElementById('fcat').value);
@@ -1214,7 +1165,7 @@ document.getElementById('nota').onclick = async () => {
   rec2.ondataavailable = e => ch.push(e.data);
   rec2.onstop = async () => {
     stream.getTracks().forEach(t => t.stop());
-    avisar(' Transcribiendo y publicando tu nota…');
+    avisar('⏳ Transcribiendo y publicando tu nota…');
     const fd = new FormData();
     fd.append('audio', new Blob(ch, {type:'audio/webm'}), 'nota.webm');
     fd.append('categoria', document.getElementById('fcat').value);
@@ -1231,7 +1182,7 @@ document.getElementById('rep').onclick = async () => {
   if (d.error) { avisar(d.error, 'error'); return; }
   document.getElementById('fest').innerText = '📊 Total: ' + d.total + ' · Hoy: ' + d.hoy + ' · Idiomas: ' + JSON.stringify(d.idiomas)
     + '\\n\\n🔥 Más frecuentes:\\n' + d.top.map((x, i) => (i+1) + '. ' + x[0] + ' (' + x[1] + ')').join('\\n');
-  avisar('📊 Reporte listo en el panel.', 'ok');
+  avisar(' Reporte listo en el panel.', 'ok');
 };
 welcome(); loadList(); refreshWho(); inp.focus();
 </script>
