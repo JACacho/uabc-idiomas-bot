@@ -1,0 +1,6 @@
+=== Feedback 20260918_200150 | Área: Admisión | Reenviar a: admision.mxl@uabc.edu.mx ===
+CAPTURA: /captura/20260918_200150.png
+PREGUNTA DEL USUARIO: Horario de atención
+RESPUESTA DEL BOT: El Centro de Enseñanza de Lenguas (CEC) ofrece cursos de inglés, francés, alemán, italiano, portugués, ruso, chino mandarín, japonés, coreano y español para extranjeros, en formatos semanal, sabatino, intensivo e intersemestral, con horarios matutinos, vespertinos y nocturnos. Los grupos de cada periodo se publican en cecuabc.com. Informes: recepcionmxl@uabc.edu.mx o al 686 841-82-91 ext. 300.
+COMENTARIO: Sólo da la información de requisitos de ingreso de licenciatura. No da la información de la convocatoria del doctorado, aunque ya se agregó la convocatoria.  Parece que el bot funciona reconociendo solo ciertas palabras. Se le complica si se da preguntas más largas o alucina proporcionando datos incorrectos.
+
