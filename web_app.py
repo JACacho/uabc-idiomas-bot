@@ -1,4 +1,6 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import re
 import uuid
 import json
@@ -7,6 +9,7 @@ import base64
 import asyncio
 import hashlib
 import secrets
+import unicodedata
 import tempfile
 import requests
 from datetime import datetime, date, timedelta
@@ -16,6 +19,9 @@ from google.genai import types as gtypes
 from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import httpx
+scheduler = AsyncIOScheduler()
 
 # ================= CONFIGURACIÓN =================
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +45,7 @@ GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OR_URL = "https://openrouter.ai/api/v1/chat/completions"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 TOPFAQ_HOURS = float(os.environ.get("TOPFAQ_HOURS", "8"))
 LOGO = os.path.join(BASE, "logo.png")
 LOGO_URL = "https://raw.githubusercontent.com/JACacho/uabc-idiomas-bot/main/logo.png"
@@ -85,21 +92,180 @@ EXT_IMG = (".png", ".jpg", ".jpeg", ".webp")
 PROMPT_POSTER = "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios."
 IMG_PRUEBA = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 
+
+def descubrir_modelos(proveedor, api_key, url):
+    if not api_key:
+        return []
+    try:
+        if proveedor == "openrouter":
+            headers = {"Authorization": f"Bearer {api_key}"}
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                # Assuming the response has a 'data' field with list of models, each having 'id'
+                return [m["id"] for m in data.get("data", [])]
+        elif proveedor == "groq":
+            headers = {"Authorization": f"Bearer {api_key}"}
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return [m["id"] for m in data.get("data", [])]
+        elif proveedor == "gemini":
+            # For Gemini, the URL should be: https://generativelanguage.googleapis.com/v1beta/models?key={api_key}
+            resp = requests.get(f"{url}?key={api_key}", timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = []
+                for m in data.get("models", []):
+                    # Check if the model supports generateContent
+                    if "generateContent" in m.get("supportedGenerationMethods", []):
+                        # The model name is like "models/gemini-1.5-pro"
+                        # We want to strip the "models/" prefix? The llamar_gemini function expects without?
+                        # Looking at the current hardcoded model: "gemini-3.8-flash"
+                        # So we remove the "models/" prefix.
+                        model_name = m["name"]
+                        if model_name.startswith("models/"):
+                            model_name = model_name[7:]
+                        models.append(model_name)
+                return models
+        else:
+            return []
+    except Exception as e:
+        print(f"Error discovering models for {proveedor}: {e}")
+        return []
+
+MODELOS_OPENROUTER = []
+MODELOS_GROQ = []
+MODELOS_GEMINI = []
+async def actualizar_modelos():
+    global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
+    async with httpx.AsyncClient() as client:
+        # OpenRouter
+        try:
+            resp = await client.get("https://openrouter.ai/api/v1/models", headers={"Authorization": f"Bearer {OR_KEY}"}, timeout=30.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                modelos = []
+                for m in data.get("data", []):
+                    # Check if free
+                    pricing = m.get("pricing", {})
+                    if pricing.get("prompt") == "0" and pricing.get("completion") == "0":
+                        # Check tool_use support
+                        supported_params = m.get("supported_parameters", [])
+                        if "tools" in supported_params:
+                            modelos.append(m["id"])
+                MODELOS_OPENROUTER = modelos
+            else:
+                print(f"Error fetching OpenRouter models: {resp.status_code}")
+        except Exception as e:
+            print(f"Exception in OpenRouter model update: {e}")
+        # Groq
+        try:
+            resp = await client.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {GROQ_KEY}"}, timeout=30.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                modelos = [m["id"] for m in data.get("data", [])]
+                MODELOS_GROQ = modelos
+            else:
+                print(f"Error fetching Groq models: {resp.status_code}")
+        except Exception as e:
+            print(f"Exception in Groq model update: {e}")
+        # Gemini
+        try:
+            resp = await client.get(f"{GEMINI_URL}?key={GEMINI_KEY}", timeout=30.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                modelos = []
+                for m in data.get("models", []):
+                    if "generateContent" in m.get("supportedGenerationMethods", []):
+                        model_name = m["name"]
+                        if model_name.startswith("models/"):
+                            model_name = model_name[7:]
+                        modelos.append(model_name)
+                MODELOS_GEMINI = modelos
+            else:
+                print(f"Error fetching Gemini models: {resp.status_code}")
+        except Exception as e:
+            print(f"Exception in Gemini model update: {e}")
+
+
+PALABRAS_EXCLUIDAS = ["whisper", "prompt-guard", "safeguard", "tts", "audio",
+                      "image", "vision", "embed", "moderation", "guard",
+                      "safety", "rerank", "transcribe", "codec", "lyria",
+                      "imagen", "veo", "sora", "dall-e", "flux", "batch"]
+
+def _es_candidato(nombre_modelo):
+    n = nombre_modelo.lower()
+    return not any(p in n for p in PALABRAS_EXCLUIDAS)
+
+async def validar_modelos_chat():
+    global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
+    candidatos_or = [m for m in MODELOS_OPENROUTER if _es_candidato(m)][:8]
+    candidatos_grq = [m for m in MODELOS_GROQ if _es_candidato(m)][:5]
+    candidatos_gem = [m for m in MODELOS_GEMINI if _es_candidato(m)][:5]
+
+    validos_or = []
+    for m in candidatos_or:
+        try:
+            r = llamar_openai("Test", [], "Di solo: listo", OR_URL, OR_KEY, [m])
+            if r and len(r) < 200:
+                validos_or.append(m)
+        except Exception:
+            pass
+
+    validos_grq = []
+    for m in candidatos_grq:
+        try:
+            r = llamar_openai("Test", [], "Di solo: listo", GROQ_URL, GROQ_KEY, [m])
+            if r and len(r) < 200:
+                validos_grq.append(m)
+        except Exception:
+            pass
+
+    validos_gem = []
+    for m in candidatos_gem:
+        try:
+            c = _mk_client(GEMINI_KEY)
+            if c:
+                r = llamar_gemini(c, "Test", [], "Di solo: listo", m)
+                if r and len(r) < 200:
+                    validos_gem.append(m)
+        except Exception:
+            pass
+
+    if validos_or: MODELOS_OPENROUTER = validos_or
+    if validos_grq: MODELOS_GROQ = validos_grq
+    if validos_gem: MODELOS_GEMINI = validos_gem
+    print(f"OK Modelos validados: OR={len(validos_or)}, Groq={len(validos_grq)}, Gemini={len(validos_gem)}")
 # ================= CEREBRO =================
 def fecha_hoy_es():
     n = datetime.now()
     return f"{DIAS[n.weekday()]} {n.day} de {MESES[n.month]} de {n.year}"
 
+def normalizar_texto(texto):
+    """Convierte a minúsculas y elimina acentos/diéresis para comparación."""
+    return ''.join(c for c in unicodedata.normalize('NFD', texto or '')
+                   if unicodedata.category(c) != 'Mn').lower()
+
 def detectar_idioma(texto):
-    t = (texto or "").lower()
-    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplôm", "traduction", "salut", "crédit", "je ", "étud", "etud", "français", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les ", "des ", "anglais"]
-    en_st = ["hello", "thank", "how", "many", "credit", "degree", "translation", "what", "when", "where", "i ", "would", "like", "to ", "study", "french", "english", "do ", "you", "for", "me", "is ", "are ", "the ", "my ", "can", "help"]
+    t = normalizar_texto(texto)
+    es_st = ["cuanto", "cuantos", "credito", "creditos", "titular", "titularme", "carrera", "tsu", "requisito", "admision", "horario", "cuesta", "precio", "donde", "como", "que", "para", "por", "con", "hola", "gracias", "necesito", "quiero", "informacion"]
+    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je ", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les ", "des ", "anglais"]
+    en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i ", "would", "like", "to ", "study", "french", "english", "do ", "you", "for", "me", "is ", "are ", "the ", "my ", "can", "help"]
+    
+    # Regla 1: Si hay CUALQUIER palabra en español, gana el español
+    if any(w in t for w in es_st):
+        return "es"
+    
+    # Regla 2: Contar coincidencias en francés e inglés
     hf = sum(1 for w in fr_st if w in t)
     he = sum(1 for w in en_st if w in t)
     if hf >= 2 and hf > he:
         return "fr"
     if he >= 2 and he > hf:
         return "en"
+    
+    # Regla 3: Por defecto, español
     return "es"
 
 def _fechas_doc(texto):
@@ -242,7 +408,7 @@ def sistema_prompt(contexto, rol="externo"):
         f"\nINFORMACIÓN DISPONIBLE:\n{contexto}"
     )
 
-def llamar_gemini(cliente, sp, hist, pregunta):
+def llamar_gemini(cliente, sp, hist, pregunta, modelo):
     if not cliente:
         return None
     try:
@@ -251,12 +417,13 @@ def llamar_gemini(cliente, sp, hist, pregunta):
             contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
         contents.append({"role": "user", "parts": [{"text": pregunta}]})
         r = cliente.models.generate_content(
-            model="gemini-2.5-flash",
+            model=modelo,
             contents=contents,
             config={"system_instruction": sp, "temperature": 0.1},
         )
         return (r.text or "").strip() or None
-    except Exception:
+    except Exception as e:
+        print(f"Error Gemini: {e}")
         return None
 
 def llamar_openai(sp, hist, pregunta, url, key, modelos):
@@ -305,7 +472,7 @@ def llamar_vision(url, key, modelos, b64, mime, prompt):
 def _vision_gemini(cliente, data, mime, prompt):
     if not cliente:
         return ""
-    for modelo in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"):
+    for modelo in ("gemini-3.8-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"):
         try:
             r = cliente.models.generate_content(
                 model=modelo,
@@ -367,10 +534,17 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     p = (pregunta or "").lower()
     lang_detect = detectar_idioma(pregunta)
     lang = lang_pref if lang_pref in ("es", "en", "fr") else lang_detect
-    es_costo = any(k in p for k in ("cuanto", "cuánto", "cuesta", "costo", "precio", "inscri"))
-    if not es_costo:
+    cost_keywords = ("cuanto", "cuánto", "cuesta", "costo", "precio", "inscri")
+    memory_keywords = ("credito", "titular", "carrera", "tsu")
+    es_costo = any(k in p for k in cost_keywords)
+    # Skip memory only if it's a cost question and does NOT contain memory-trigger words
+    if es_costo and not any(k in p for k in memory_keywords):
+        pass  # skip memory
+    else:
         for claves, trad in MEMORIA_OFICIAL:
             if any(k in p for k in claves):
+                if lang_pref not in ("es", "en", "fr"):
+                    lang = "es"
                 return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()
@@ -384,25 +558,48 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     for m in (historial or []):
         if isinstance(m, dict) and isinstance(m.get("content"), str):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
-    texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, ["deepseek/deepseek-v4-flash", "deepseek/deepseek-chat-v3.1", "meta-llama/llama-3.3-70b-instruct:free"])
-    if not _es_valida(texto):
-        texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final)
-    if not _es_valida(texto):
-        texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final)
-    if not _es_valida(texto):
-        texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, ["llama-3.3-70b-versatile"])
+    # Dynamic model selection with fallback per provider
+    # OpenRouter
+    texto = None
+    if MODELOS_OPENROUTER:
+        modelos_or = MODELOS_OPENROUTER
+        free_models = [m for m in modelos_or if m.endswith(":free") and any(word in m for word in ["coder", "nemotron", "qwen"])]
+        if free_models:
+            modelos_or = free_models
+        texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, modelos_or[:3])
+    # Gemini
+    if not _es_valida(texto) and MODELOS_GEMINI:
+        for modelo in MODELOS_GEMINI:
+            if not cliente_gemini and not cliente_gemini2:
+                break
+            # Try primary client
+            if cliente_gemini:
+                texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final, modelo)
+                if _es_valida(texto):
+                    break
+            # Try secondary client
+            if not _es_valida(texto) and cliente_gemini2:
+                texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final, modelo)
+                if _es_valida(texto):
+                    break
+    # Groq
+    if not _es_valida(texto) and MODELOS_GROQ:
+        # Filter out whisper, prompt-guard, safeguard models
+        groq_models = [m for m in MODELOS_GROQ if not any(x in m.lower() for x in ["whisper", "prompt-guard", "safeguard"])]
+        if groq_models:
+            texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, groq_models)
+    # If still not valid, fallback to document response
     if not _es_valida(texto):
         fb = respuesta_de_documentos(pregunta, rol)
         if fb:
             return fb, lang
     if not _es_valida(texto):
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
-    texto = re.sub(r"^(\s*\[[^\]]{1,40}\]\s*)+", "", texto).strip()
+    texto = re.sub(r"^(\\s*\[[^\\]]{1,40}\\]\s*)+", "", texto).strip()
     if _es_cacheable(texto):
         cache[clave] = [texto, lang]
         _guardar_cache(cache)
     return texto, lang
-
 def transcribir_groq(data):
     if not GROQ_KEY:
         return ""
@@ -425,7 +622,7 @@ def transcribir(audio_bytes):
         for mime in ("audio/webm", "audio/wav", "audio/mp3", "audio/ogg"):
             try:
                 r = cliente.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.8-flash",
                     contents=[
                         gtypes.Part(inline_data=gtypes.Blob(data=audio_bytes, mime_type=mime)),
                         "Transcribe textualmente este audio (español, inglés o francés). Devuelve solo la transcripción.",
@@ -454,6 +651,35 @@ async def generar_voz(texto, lang):
 
 # ================= SERVICIOS =================
 app = FastAPI()
+@app.on_event("startup")
+async def startup_event():
+    global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
+    # Update models at startup
+    await actualizar_modelos()
+    await validar_modelos_chat()
+    print(f"Modelos disponibles: OpenRouter={len(MODELOS_OPENROUTER)}, Groq={len(MODELOS_GROQ)}, Gemini={len(MODELOS_GEMINI)}")
+    # Schedule daily update at 3:00 AM
+    if not scheduler.running:
+        scheduler.add_job(actualizar_modelos, 'cron', hour=3, minute=0)
+        scheduler.add_job(validar_modelos_chat, 'cron', hour=3, minute=5)
+        scheduler.start()
+    # Background task for keep-alive
+    async def keep_alive_task():
+        port = int(os.environ.get("PORT", 7860))
+        url = f"http://127.0.0.1:{port}/health"
+        async with httpx.AsyncClient() as client:
+            while True:
+                try:
+                    await client.get(url, timeout=10.0)
+                except Exception as e:
+                    print(f"Keep-alive request failed: {e}")
+                await asyncio.sleep(600)  # 10 minutes
+
+    asyncio.create_task(keep_alive_task())
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 
 FAQ = [
     (["credito", "titular", "titul"], "¿Cuántos créditos necesito para titularme en Traducción?"),
@@ -837,6 +1063,69 @@ async def api_debug():
 @app.get("/api/debug_vision")
 async def api_debug_vision():
     return probar_vision()
+@app.get("/api/modelos")
+async def api_modelos():
+    return {
+        "openrouter": MODELOS_OPENROUTER,
+        "groq": MODELOS_GROQ,
+        "gemini": MODELOS_GEMINI
+    }
+
+@app.get("/api/test_ia")
+async def api_test_ia():
+    results = {}
+    # Test OpenRouter
+    if MODELOS_OPENROUTER:
+        modelos_or = MODELOS_OPENROUTER if MODELOS_OPENROUTER else ["nvidia/nemotron-3-super-120b-a12b:free"]
+        free_models = [m for m in modelos_or if m.endswith(":free") and any(word in m for word in ["coder", "nemotron", "qwen"])]
+        if free_models:
+            modelos_or = free_models
+        test_model = modelos_or[0] if modelos_or else None
+    else:
+        test_model = None
+    if test_model and OR_KEY:
+        try:
+            texto = llamar_openai("System: Test", [], "Di solo la palabra: listo", OR_URL, OR_KEY, [test_model])
+            results["openrouter"] = {"modelo": test_model, "respuesta": texto[:100] if texto else None, "error": None}
+        except Exception as e:
+            results["openrouter"] = {"modelo": test_model, "respuesta": None, "error": str(e)}
+    else:
+        results["openrouter"] = {"modelo": test_model, "respuesta": None, "error": "No model or no API key"}
+
+    # Test Groq
+    groq_models = [m for m in MODELOS_GROQ if "whisper" not in m.lower()]
+    if not groq_models:
+        groq_models = ["llama-3.3-70b-versatile"]
+    test_model_groq = groq_models[0]
+    if test_model_groq and GROQ_KEY:
+        try:
+            texto = llamar_openai("System: Test", [], "Di solo la palabra: listo", GROQ_URL, GROQ_KEY, [test_model_groq])
+            results["groq"] = {"modelo": test_model_groq, "respuesta": texto[:100] if texto else None, "error": None}
+        except Exception as e:
+            results["groq"] = {"modelo": test_model_groq, "respuesta": None, "error": str(e)}
+    else:
+        results["groq"] = {"modelo": test_model_groq, "respuesta": None, "error": "No model or no API key"}
+
+    # Test Gemini
+    if MODELOS_GEMINI:
+        test_model_gemini = MODELOS_GEMINI[0]
+    else:
+        test_model_gemini = "gemini-3.8-flash"
+    if test_model_gemini and GEMINI_KEY:
+        try:
+            cliente = _mk_client(GEMINI_KEY)
+            if cliente:
+                texto = llamar_gemini(cliente, "System: Test", [], "Di solo la palabra: listo", test_model_gemini)
+                results["gemini"] = {"modelo": test_model_gemini, "respuesta": texto[:100] if texto else None, "error": None}
+            else:
+                results["gemini"] = {"modelo": test_model_gemini, "respuesta": None, "error": "Failed to create client"}
+        except Exception as e:
+            results["gemini"] = {"modelo": test_model_gemini, "respuesta": None, "error": str(e)}
+    else:
+        results["gemini"] = {"modelo": test_model_gemini, "respuesta": None, "error": "No model or no API key"}
+
+    return results
+
 
 @app.post("/api/conv/save")
 async def conv_save(req: Request):
@@ -1396,6 +1685,14 @@ applyFont(); welcome(); loadList(); refreshWho(); inp.focus();
 @app.get("/")
 async def inicio():
     return HTMLResponse(PAGINA)
+
+@app.get("/api/cache/clear_all")
+async def cache_clear_all():
+    try:
+        os.remove(CACHE)
+    except Exception:
+        pass
+    return {"ok": True, "mensaje": "Caché eliminada. Reinicia el bot para aplicar."}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))
