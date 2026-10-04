@@ -1,0 +1,15 @@
+.env
+__pycache__/
+audios/
+cache.json
+topfaq_cache.json
+uso.jsonl
+bot.db
+uabc_bot.db
+fix_keepalive.py
+fix_responder.py
+fix_responder2.py
+fix_responder_final.py
+show_sections.py
+salud-mexxicali-bot/
+*.pyc
