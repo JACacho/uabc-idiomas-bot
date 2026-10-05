@@ -13,3 +13,7 @@ fix_responder_final.py
 show_sections.py
 salud-mexxicali-bot/
 *.pyc
+chroma_db/
+datos_scraper/
+*.db
+reporte_duplicados.txt

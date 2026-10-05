@@ -1,0 +1,22 @@
+{
+  "practicas": {
+    "cargo": "Responsable de Prácticas Profesionales y Emprendimiento",
+    "nombre": "Dra. María Fernanda Rodríguez Farah",
+    "correo": "mfernanda.rodriguez@uabc.edu.mx",
+    "telefono": "686-689-0825",
+    "ext": "44938",
+    "temas": ["prácticas profesionales", "emprendimiento", "reportes parciales", "unidad receptora"]
+  },
+  "titulacion": {
+    "cargo": "Encargado de Titulación",
+    "nombre": "Ing. Israel Figueroa",
+    "correo": "titulacion.idiomas@uabc.edu.mx",
+    "telefono": "686-689-0825",
+    "ext": "123",
+    "temas": ["constancias", "título extraviado", "trámites de titulación", "certificaciones"]
+  },
+  "servicio_social": {"cargo": "Encargado de Servicio Social", "nombre": "[confirmar]", "correo": "[confirmar]", "telefono": "686-689-0825", "ext": "[confirmar]", "temas": ["servicio social comunitario", "servicio social profesional"]},
+  "admision": {"cargo": "Responsable de Admisión", "nombre": "[confirmar]", "correo": "admision.mxl@uabc.edu.mx", "telefono": "686-689-0825", "ext": "[confirmar]", "temas": ["nuevo ingreso", "fichas", "examen de selección"]},
+  "cec": {"cargo": "Responsable del CEC", "nombre": "[confirmar]", "correo": "recepcionmxl@uabc.edu.mx", "telefono": "686-841-8291", "ext": "300", "temas": ["cursos de idiomas", "inscripciones CEC", "horarios"]},
+  "egresados": {"cargo": "Responsable de Egresados", "nombre": "[confirmar]", "correo": "egresados__idiomas__mxl@uabc.edu.mx", "telefono": "686-689-0825", "ext": "[confirmar]", "temas": ["bolsa de trabajo", "seguimiento de egresados"]}
+}

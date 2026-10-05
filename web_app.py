@@ -21,10 +21,57 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import httpx
+import chromadb
+from sentence_transformers import SentenceTransformer
+from database import log_upload, log_ai_usage, get_usage_report
+
 scheduler = AsyncIOScheduler()
+
+
+
+def generar_texto_directorio():
+    try:
+        with open(DIRECTORIO_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return ""
+    lineas = ["=== DIRECTORIO DE ENCARGADOS - FACULTAD DE IDIOMAS UABC MEXICALI ===",
+              "Para resolver trámites específicos, contacta directamente al encargado.", ""]
+    for key, info in data.items():
+        lineas.append(info.get("cargo", "").upper())
+        lineas.append(f"Encargado: {info.get('nombre','')}")
+        lineas.append(f"Correo: {info.get('correo','')}")
+        ext = info.get('ext','')
+        tel = info.get('telefono','')
+        lineas.append(f"Teléfono: {tel}" + (f" ext. {ext}" if ext else ""))
+        lineas.append(f"Atiende: {', '.join(info.get('temas', []))}")
+        lineas.append("")
+    return "\n".join(lineas)
+
+def _tiene_fecha_pasada(texto):
+    from datetime import date as _date
+    hoy = _date.today()
+    meses = {"enero":1,"febrero":2,"marzo":3,"abril":4,"mayo":5,"junio":6,
+             "julio":7,"agosto":8,"septiembre":9,"octubre":10,"noviembre":11,"diciembre":12}
+    # Fechas tipo "18 de agosto" (asume año actual)
+    for d, m in re.findall(r'(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)', texto.lower()):
+        try:
+            if _date(hoy.year, meses[m], int(d)) < hoy:
+                return True
+        except Exception:
+            pass
+    # Fechas tipo dd/mm/yyyy
+    for d, m, y in re.findall(r'(\d{1,2})/(\d{1,2})/(\d{4})', texto):
+        try:
+            if _date(int(y), int(m), int(d)) < hoy:
+                return True
+        except Exception:
+            pass
+    return False
 
 # ================= CONFIGURACIÓN =================
 BASE = os.path.dirname(os.path.abspath(__file__))
+DIRECTORIO_JSON = os.path.join(BASE, "directorio_encargados.json")
 MANUAL = os.path.join(BASE, "Manual_Aspirantes_Idiomas_UABC.txt")
 CARPETA = os.path.join(BASE, "datos_bot")
 AUDIOS = os.path.join(BASE, "audios")
@@ -350,27 +397,51 @@ def _cargar_docs(rol="externo"):
                     continue
     return docs
 
+_embedder = None
+_chroma_collection = None
+
+def get_embedder():
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformer('all-MiniLM-L6-v2')
+    return _embedder
+
+def get_chroma():
+    global _chroma_collection
+    if _chroma_collection is None:
+        client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
+        _chroma_collection = client.get_or_create_collection("uabc_info")
+    return _chroma_collection
+
 def cargar_contexto(pregunta, rol="externo"):
     partes = []
     try:
+        partes.append(generar_texto_directorio())
+    except Exception as e:
+        print(f"Error directorio: {e}")
+    try:
         with open(MANUAL, encoding="utf-8", errors="ignore") as f:
-            partes.append(_limpiar_doc(f.read()))
+            manual_text = _limpiar_doc(f.read())
+            if manual_text:
+                partes.append(manual_text)
     except Exception:
         pass
-    docs = _cargar_docs(rol)
-    hoy = date.today()
-    horizonte = hoy + timedelta(days=14)
-    recientes = sorted(docs.keys(), reverse=True)[:2]
-    frescos = [fn for fn, t in docs.items() if any(hoy <= f <= horizonte for f in _fechas_doc(t))][:3]
-    qt = _tokens(pregunta)
-    scored = sorted(((len(qt & _tokens(t)), fn) for fn, t in docs.items()), reverse=True)
-    seleccion = []
-    for fn in recientes + frescos + [fn for _, fn in scored[:2]]:
-        if fn not in seleccion:
-            seleccion.append(fn)
-    for fn in seleccion[:5]:
-        partes.append(docs[fn])
-    return "\n\n".join(partes)[:12000]
+    try:
+        collection = get_chroma()
+        if collection.count() > 0:
+            embedder = get_embedder()
+            vector = embedder.encode(pregunta).tolist()
+            where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": "publico"}
+            results = collection.query(
+                query_embeddings=[vector], n_results=8,
+                where=where_filter, include=["documents"]
+            )
+            fragmentos = results.get("documents", [[]])[0]
+            fragmentos = [f for f in fragmentos if not _tiene_fecha_pasada(f)]
+            partes.extend(fragmentos)
+    except Exception as e:
+        print(f"Error vectorial: {e}")
+    return "\n\n---\n\n".join(partes) if partes else ""
 
 def respuesta_de_documentos(pregunta, rol="externo"):
     docs = _cargar_docs(rol)
@@ -401,6 +472,7 @@ def sistema_prompt(contexto, rol="externo"):
         "Si preguntan por COSTOS o PRECIOS, da la cifra exacta que aparezca en la INFORMACIÓN DISPONIBLE (monto, moneda y a quién aplica); si no aparece, indica consultar la convocatoria vigente en cecuabc.com o al 686 841-82-91 ext. 300. "
         "NUNCA repitas la pregunta del usuario ni respondas con otra pregunta; entrega siempre información concreta. "
         "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy (con fecha, hora y lugar si los tienes); NUNCA cites fechas que ya pasaron ni te contradigas. "
+        "NUNCA menciones eventos, conferencias o talleres cuya fecha ya pasó. Si solo encuentras eventos pasados, indica que no hay eventos próximos por ahora. "
         "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
         "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
         "Si la información no aparece, sugiere contactar a la Facultad: tel. 686-689-0825, idiomas.mxl@uabc.edu.mx, idiomas.mxl.uabc.mx. "
@@ -757,12 +829,20 @@ def leer_uso():
     except Exception:
         return []
 
-def guardar_aviso(texto, categoria="Avisos"):
-    nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + categoria + ".txt"
+def guardar_aviso(texto, categoria="Avisos", visibilidad="publico", departamento="Otro",
+                  responsable_nombre="", responsable_correo=""):
+    depto_slug = re.sub(r'[^A-Za-z0-9]', '_', departamento)
+    sufijo_vis = "_interno" if visibilidad == "interno" else ""
+    nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + depto_slug + "_" + categoria + sufijo_vis + ".txt"
     cab = f"=== {categoria} | Subido: {datetime.now().strftime('%d/%m/%Y')} | Vigente hasta: sin límite ===\n"
     contenido = cab + texto
     with open(os.path.join(CARPETA, nuevo), "w", encoding="utf-8") as f:
         f.write(contenido)
+    try:
+        log_upload(nuevo, categoria, responsable_correo or "anonimo@uabc.edu.mx",
+                  responsable_nombre or "Encargado", texto[:200])
+    except Exception as e:
+        print(f"Error log_upload: {e}")
     return nuevo, github_subir(f"datos_bot/{nuevo}", contenido.encode("utf-8"))
 
 def extraer_texto(ruta, nombre):
@@ -1301,6 +1381,24 @@ PAGINA = """
       <button id="unlock">🔓 Entrar</button>
       <button id="salirp">🚪 Salir del panel</button>
       <div id="zona" style="display:none">
+         <span class="etiq">👤 Tu identidad (se recuerda automáticamente)</span>
+         <input id="admin_nombre" placeholder="Tu nombre completo" style="margin:4px 0;padding:8px;border-radius:8px;border:1px solid #cfd8dc;width:100%;">
+         <input id="admin_correo" placeholder="Tu correo (@uabc.edu.mx)" style="margin:4px 0;padding:8px;border-radius:8px;border:1px solid #cfd8dc;width:100%;">
+         <select id="admin_depto" style="margin:4px 0;padding:8px;border-radius:8px;border:1px solid #cfd8dc;width:100%;">
+           <option value="">-- Selecciona tu departamento --</option>
+           <option>Dirección</option><option>Subdirección</option>
+           <option>Coordinación de Investigación y Posgrado</option>
+           <option>Coordinación de Formación Profesional</option>
+           <option>Coordinación de Extensión y Vinculación</option>
+           <option>Administración</option><option>Titulación</option>
+           <option>Servicio Social</option><option>Prácticas Profesionales</option>
+           <option>Admisión</option><option>CEC</option><option>Egresados</option><option>Otro</option>
+         </select>
+         <span class="etiq">🔒 Visibilidad del contenido</span>
+         <select id="fvis" style="margin:4px 0;padding:8px;border-radius:8px;border:1px solid #cfd8dc;width:100%;">
+           <option value="publico">🌐 Público (todos lo ven)</option>
+           <option value="interno">🔒 Solo comunidad UABC</option>
+         </select>
         <span class="etiq">1️⃣ Categoría del aviso (usa "Clases" para info interna UABC)</span>
         <select id="fcat">
           <option>Avisos</option><option>Eventos</option><option>Suspensiones</option><option>Horarios</option><option>Exámenes</option><option>Convocatorias</option><option>TSU</option><option>PlanDeEstudios</option><option>CEC</option><option>Clases</option><option>Tareas</option><option>Internos</option>
@@ -1621,23 +1719,37 @@ document.getElementById('unlock').onclick = async () => {
   const d = await r.json();
   document.getElementById('zona').style.display = d.ok ? 'block' : 'none';
   if (d.ok) { loadDocs(); avisar('✅ Panel de personal abierto.', 'ok'); }
+            // Load saved identity
+            const savedId = JSON.parse(localStorage.getItem('admin_identidad') || '{}');
+            if (savedId.nombre) document.getElementById('admin_nombre').value = savedId.nombre;
+            if (savedId.correo) document.getElementById('admin_correo').value = savedId.correo;
+            if (savedId.depto) document.getElementById('admin_depto').value = savedId.depto;
   else avisar('❌ Clave incorrecta.', 'error');
 };
 document.getElementById('fsubir').onclick = async () => {
   const f = document.getElementById('ffile').files[0] || droppedFile;
   if (!f && !document.getElementById('ftexto').value.trim()) { avisar('⚠️ Elige un archivo o pega el texto en 📝.', 'error'); return; }
   avisar('⏳ Procesando y publicando…');
+  const nombre = document.getElementById('admin_nombre').value.trim();
+  const correo = document.getElementById('admin_correo').value.trim();
+  const depto = document.getElementById('admin_depto').value;
+  if (!nombre || !correo || !depto) { avisar('⚠️ Completa tu identidad antes de subir.', 'error'); return; }
+  localStorage.setItem('admin_identidad', JSON.stringify({nombre, correo, depto})); 
   const fd = new FormData();
   if (f) fd.append('archivo', f);
   fd.append('categoria', document.getElementById('fcat').value);
   fd.append('vigencia', document.getElementById('fvig').value);
   fd.append('reemplazar', '0');
   fd.append('texto_manual', document.getElementById('ftexto').value);
+  fd.append('responsable_nombre', nombre);
+  fd.append('responsable_correo', correo);
+  fd.append('departamento', depto);
+  fd.append('visibilidad', document.getElementById('fvis').value);
   const d = await (await fetch('/api/upload', {method:'POST', body: fd})).json();
   document.getElementById('fest').innerText = d.estado;
   avisar(d.estado, d.estado.startsWith('✅') ? 'ok' : 'error');
   loadDocs();
-};
+}
 document.getElementById('ldocs').onclick = loadDocs;
 document.getElementById('lfb').onclick = async () => {
   const d = await (await fetch('/api/feedback/list?clave=' + encodeURIComponent(document.getElementById('clave').value))).json();
@@ -1693,6 +1805,14 @@ async def cache_clear_all():
     except Exception:
         pass
     return {"ok": True, "mensaje": "Caché eliminada. Reinicia el bot para aplicar."}
+
+@app.get("/api/vectorial/stats")
+async def vectorial_stats():
+    try:
+        c = get_chroma()
+        return {"fragmentos_indexados": c.count(), "estado": "ok"}
+    except Exception as e:
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))

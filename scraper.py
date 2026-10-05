@@ -14,14 +14,17 @@ CARPETA = os.path.join(BASE, "datos_bot")
 os.makedirs(CARPETA, exist_ok=True)
 
 PAGINAS = {
-    "PracticasProfesionales": "https://idiomas.mxl.uabc.mx/practicas-profesionales/",
-    "Admision": "https://idiomas.mxl.uabc.mx/admision/",
-    "CEC": "https://idiomas.mxl.uabc.mx/cec/",
-    "Titulacion": "https://idiomas.mxl.uabc.mx/titulacion/",
-    "Egresados": "https://idiomas.mxl.uabc.mx/egresados/",
-    "Posgrado": "https://idiomas.mxl.uabc.mx/posgrado/",
-    "OfertaEducativa": "https://idiomas.mxl.uabc.mx/oferta-educativa/",
-    "Inicio": "https://idiomas.mxl.uabc.mx/",
+    "inicio": "https://idiomas.mxl.uabc.mx/",
+    "traduccion": "https://idiomas.mxl.uabc.mx/traduccion/",
+    "ensenanza": "https://idiomas.mxl.uabc.mx/ensenanza/",
+    "educacion_continua": "https://idiomas.mxl.uabc.mx/educacion-continua/",
+    "mlm": "https://idiomas.mxl.uabc.mx/mlm/",
+    "eti": "https://idiomas.mxl.uabc.mx/eti/",
+    "preguntas_frecuentes": "https://idiomas.mxl.uabc.mx/preguntas-frecuentes/",
+    "servicio_social": "https://idiomas.mxl.uabc.mx/servicio-social/",
+    "titulacion": "https://idiomas.mxl.uabc.mx/titulacion/",
+    "practicas_profesionales": "https://idiomas.mxl.uabc.mx/practicas-profesionales/",
+    "egresados": "https://idiomas.mxl.uabc.mx/egresados/",
 }
 
 HEADERS = {"User-Agent": "UABCBot-Scraper/1.0"}

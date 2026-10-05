@@ -13,3 +13,5 @@ python-dotenv
 apscheduler
 httpx
 python-dotenv
+chromadb
+sentence-transformers
