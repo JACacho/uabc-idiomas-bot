@@ -673,7 +673,7 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
             for claves, trad in MEMORIA_OFICIAL:
                 if any(k in p for k in claves):
                     if lang_pref not in ("es", "en", "fr"):
-                        lang = lang_detect
+                        lang = "es"
                     return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()

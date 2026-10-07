@@ -311,30 +311,12 @@ def normalizar_texto(texto):
 def detectar_idioma(texto):
     t = normalizar_texto(texto)
     es_st = ["cuanto", "cuantos", "credito", "creditos", "titular", "titularme", "carrera", "tsu", "requisito", "admision", "horario", "cuesta", "precio", "donde", "como", "que", "para", "por", "con", "hola", "gracias", "necesito", "quiero", "informacion"]
-    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les", "des", "anglais", "alors", "carriere", "peux", "utilizar", "etudier", "trabajar", "quels", "quelles", "cest", "sont", "dans", "porque", "por qué", "comment"]
-    en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i", "would", "like", "to", "study", "french", "english", "do", "you", "for", "me", "is", "are", "the", "my", "can", "help"]
+    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je ", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les ", "des ", "anglais", "alors", "carriere", "carrière", "peux", "utilizar", "etudier", "trabajar", "quels", "quelles", "c'est", "sont", "dans", "por qué", "cómo", "cuál es", "me gustaría", "me gustaría", "estudio", "estudio", "vivo", "vivo", "ahí está", "ahi está", "por lo tanto", "también", "pero", "muy", "tres"]
+    en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i ", "would", "like", "to ", "study", "french", "english", "do ", "you", "for", "me", "is ", "are ", "the ", "my ", "can", "help"]
     
-    # Función auxiliar: busca palabra completa (con word boundary)
-    def tiene_palabra(palabras, texto_norm):
-        for p in palabras:
-            if re.search(r'\b' + re.escape(p) + r'\b', texto_norm):
-                return True
-        return False
-    
-    # Regla 1: Si hay CUALQUIER palabra en español (palabra completa), gana el español
-    if tiene_palabra(es_st, t):
+    # Regla 1: Si hay CUALQUIER palabra en español, gana el español
+    if any(w in t for w in es_st):
         return "es"
-    
-    # Regla 2: Contar coincidencias en francés e inglés
-    hf = sum(1 for w in fr_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    he = sum(1 for w in en_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    if hf >= 1 and hf >= he:
-        return "fr"
-    if he >= 2 and he > hf:
-        return "en"
-    
-    # Regla 3: Por defecto, español
-    return "es"
     
     # Regla 2: Contar coincidencias en francés e inglés
     hf = sum(1 for w in fr_st if w in t)
@@ -468,7 +450,7 @@ def cargar_contexto(pregunta, rol="externo"):
         client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
         collection = client.get_or_create_collection("uabc_info")
         if collection.count() > 0:
-            where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": {"$in": ["publico"]}}
+            where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": "publico"}
             results = collection.query(
                 query_embeddings=[vector], n_results=8,
                 where=where_filter, include=["documents"]
@@ -485,8 +467,8 @@ def cargar_contexto(pregunta, rol="externo"):
                         archivo = meta.get("archivo", "")
                         if "20261006" in archivo or "20261007" in archivo:
                             recientes.append(doc)
-                    if recientes:
-                        fragmentos = recientes[:3] + fragmentos
+                if recientes:
+                    fragmentos = recientes[:3] + fragmentos
                 except Exception:
                     pass
             partes.extend(fragmentos)
@@ -673,7 +655,7 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
             for claves, trad in MEMORIA_OFICIAL:
                 if any(k in p for k in claves):
                     if lang_pref not in ("es", "en", "fr"):
-                        lang = lang_detect
+                        lang = "es"
                     return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()
@@ -888,7 +870,7 @@ def leer_uso():
     except Exception:
         return []
 
-def _indexar_archivo_robusto(ruta_archivo, visibilidad="publico"):
+def _indexar_archivo(ruta_archivo, visibilidad="publico"):
     """Indexa un solo archivo en ChromaDB. Tarda ~2 segundos."""
     try:
         from indexar_vectorial import chunk_text, extract_category
@@ -1938,9 +1920,3 @@ async def vectorial_stats():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))
-
-
-# ===== NOTA DE VERSIÓN =====
-# Fecha: 2026-10-06_1908
-# Cambios: Fix detección francés con word-boundary + Fix referencia _indexar_archivo_robusto
-# ===========================

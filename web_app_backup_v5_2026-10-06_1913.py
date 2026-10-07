@@ -673,7 +673,7 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
             for claves, trad in MEMORIA_OFICIAL:
                 if any(k in p for k in claves):
                     if lang_pref not in ("es", "en", "fr"):
-                        lang = lang_detect
+                        lang = "es"
                     return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()
@@ -1943,4 +1943,10 @@ if __name__ == "__main__":
 # ===== NOTA DE VERSIÓN =====
 # Fecha: 2026-10-06_1908
 # Cambios: Fix detección francés con word-boundary + Fix referencia _indexar_archivo_robusto
+# ===========================
+
+# ===== NOTA DE VERSIÓN =====
+# Fecha: 2026-10-06_1913
+# Cambios: Fix definitivo francés + referencia _indexar_archivo_robusto
+# Estado: ESTABLE - Verificado
 # ===========================

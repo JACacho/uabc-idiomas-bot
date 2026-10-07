@@ -54,12 +54,9 @@ def _tiene_fecha_pasada(texto):
     meses = {"enero":1,"febrero":2,"marzo":3,"abril":4,"mayo":5,"junio":6,
              "julio":7,"agosto":8,"septiembre":9,"octubre":10,"noviembre":11,"diciembre":12}
     # Fechas tipo "18 de agosto" (asume año actual)
-    # NO bloquear si es hoy, mañana o ayer (margen de 1 día)
-    ayer = hoy - timedelta(days=1)
     for d, m in re.findall(r'(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)', texto.lower()):
         try:
-            fecha_texto = _date(hoy.year, meses[m], int(d))
-            if fecha_texto < ayer:
+            if _date(hoy.year, meses[m], int(d)) < hoy:
                 return True
         except Exception:
             pass
@@ -311,35 +308,17 @@ def normalizar_texto(texto):
 def detectar_idioma(texto):
     t = normalizar_texto(texto)
     es_st = ["cuanto", "cuantos", "credito", "creditos", "titular", "titularme", "carrera", "tsu", "requisito", "admision", "horario", "cuesta", "precio", "donde", "como", "que", "para", "por", "con", "hola", "gracias", "necesito", "quiero", "informacion"]
-    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les", "des", "anglais", "alors", "carriere", "peux", "utilizar", "etudier", "trabajar", "quels", "quelles", "cest", "sont", "dans", "porque", "por qué", "comment"]
-    en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i", "would", "like", "to", "study", "french", "english", "do", "you", "for", "me", "is", "are", "the", "my", "can", "help"]
+    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je ", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les ", "des ", "anglais"]
+    en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i ", "would", "like", "to ", "study", "french", "english", "do ", "you", "for", "me", "is ", "are ", "the ", "my ", "can", "help"]
     
-    # Función auxiliar: busca palabra completa (con word boundary)
-    def tiene_palabra(palabras, texto_norm):
-        for p in palabras:
-            if re.search(r'\b' + re.escape(p) + r'\b', texto_norm):
-                return True
-        return False
-    
-    # Regla 1: Si hay CUALQUIER palabra en español (palabra completa), gana el español
-    if tiene_palabra(es_st, t):
+    # Regla 1: Si hay CUALQUIER palabra en español, gana el español
+    if any(w in t for w in es_st):
         return "es"
-    
-    # Regla 2: Contar coincidencias en francés e inglés
-    hf = sum(1 for w in fr_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    he = sum(1 for w in en_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    if hf >= 1 and hf >= he:
-        return "fr"
-    if he >= 2 and he > hf:
-        return "en"
-    
-    # Regla 3: Por defecto, español
-    return "es"
     
     # Regla 2: Contar coincidencias en francés e inglés
     hf = sum(1 for w in fr_st if w in t)
     he = sum(1 for w in en_st if w in t)
-    if hf >= 1 and hf >= he:
+    if hf >= 2 and hf > he:
         return "fr"
     if he >= 2 and he > hf:
         return "en"
@@ -468,27 +447,13 @@ def cargar_contexto(pregunta, rol="externo"):
         client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
         collection = client.get_or_create_collection("uabc_info")
         if collection.count() > 0:
-            where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": {"$in": ["publico"]}}
+            where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": "publico"}
             results = collection.query(
                 query_embeddings=[vector], n_results=8,
                 where=where_filter, include=["documents"]
             )
             fragmentos = results.get("documents", [[]])[0]
             fragmentos = [f for f in fragmentos if not _tiene_fecha_pasada(f)]
-            # Si la pregunta menciona "hoy", "mañana" o "esta semana", añadir avisos recientes al inicio
-            pregunta_lower = (pregunta or "").lower()
-            if any(k in pregunta_lower for k in ["hoy", "mañana", "manana", "esta semana", "proxim"]):
-                try:
-                    todos = collection.get(include=["documents", "metadatas"])
-                    recientes = []
-                    for doc, meta in zip(todos.get("documents", []), todos.get("metadatas", [])):
-                        archivo = meta.get("archivo", "")
-                        if "20261006" in archivo or "20261007" in archivo:
-                            recientes.append(doc)
-                    if recientes:
-                        fragmentos = recientes[:3] + fragmentos
-                except Exception:
-                    pass
             partes.extend(fragmentos)
     except Exception as e:
         print(f"Error vectorial: {e}")
@@ -522,7 +487,7 @@ def sistema_prompt(contexto, rol="externo"):
         "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales, claros y concisos (máximo ~120 palabras salvo que pidan detalle). "
         "Si preguntan por COSTOS o PRECIOS, da la cifra exacta que aparezca en la INFORMACIÓN DISPONIBLE (monto, moneda y a quién aplica); si no aparece, indica consultar la convocatoria vigente en cecuabc.com o al 686 841-82-91 ext. 300. "
         "NUNCA repitas la pregunta del usuario ni respondas con otra pregunta; entrega siempre información concreta. "
-        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana' o 'esta semana', SIEMPRE revisa si hay avisos que mencionen esas fechas específicas o un rango que las incluya. Si encuentras un aviso de suspensión o cambio de modalidad vigente para HOY o MAÑANA, DEBES informarlo claramente al usuario como PRIMERA respuesta. NUNCA digas 'no hay información' si existe un aviso vigente que cubra esas fechas. "
+        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy (con fecha, hora y lugar si los tienes); NUNCA cites fechas que ya pasaron ni te contradigas. "
         "NUNCA menciones eventos, conferencias o talleres cuya fecha ya pasó. Si solo encuentras eventos pasados, indica que no hay eventos próximos por ahora. "
         "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
         "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
@@ -673,7 +638,7 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
             for claves, trad in MEMORIA_OFICIAL:
                 if any(k in p for k in claves):
                     if lang_pref not in ("es", "en", "fr"):
-                        lang = lang_detect
+                        lang = "es"
                     return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()
@@ -888,7 +853,7 @@ def leer_uso():
     except Exception:
         return []
 
-def _indexar_archivo_robusto(ruta_archivo, visibilidad="publico"):
+def _indexar_archivo(ruta_archivo, visibilidad="publico"):
     """Indexa un solo archivo en ChromaDB. Tarda ~2 segundos."""
     try:
         from indexar_vectorial import chunk_text, extract_category
@@ -917,32 +882,10 @@ def _indexar_archivo_robusto(ruta_archivo, visibilidad="publico"):
         print(f"❌ Error indexado: {e}")
         return False
 
-
-
-def _indexar_archivo_robusto(ruta_archivo):
-    """Indexa usando subprocess. Confiable pero tarda ~30 seg."""
-    import subprocess
-    import sys as _sys
-    try:
-        print(f"🔄 Re-indexando por nuevo archivo: {ruta_archivo}")
-        result = subprocess.run(
-            [_sys.executable, "indexar_vectorial.py"],
-            cwd=BASE,
-            capture_output=True,
-            text=True,
-            timeout=180
-        )
-        if result.returncode == 0:
-            print(f"✅ Re-indexado exitoso")
-            return True
-        else:
-            print(f"❌ Error: {result.stderr[-500:]}")
-            with open(os.path.join(BASE, "indexado_errores.log"), "a", encoding="utf-8") as f:
-                f.write(f"\n=== {datetime.now()} ===\n{result.stderr}\n")
-            return False
-    except Exception as e:
-        print(f"❌ Excepción: {e}")
-        return False
+async def _indexar_async(ruta_archivo, visibilidad):
+    import asyncio as _aio
+    loop = _aio.get_event_loop()
+    await loop.run_in_executor(None, _indexar_archivo, ruta_archivo, visibilidad)
 
 def guardar_aviso(texto, categoria="Avisos", visibilidad="publico", departamento="Otro",
                   responsable_nombre="", responsable_correo=""):
@@ -1071,8 +1014,8 @@ async def voice_note(audio: UploadFile = File(...), categoria: str = Form("Aviso
     if not texto:
         return {"estado": "⚠️ No logré escuchar la nota."}
     nuevo, resp = guardar_aviso(texto, categoria)
-    import threading
-    threading.Thread(target=_indexar_archivo_robusto, args=(os.path.join(CARPETA, nuevo),), daemon=True).start()
+    import asyncio as _aio
+    _aio.create_task(_indexar_async(os.path.join(CARPETA, nuevo), "publico"))
     return {"estado": f"✅ Nota de voz publicada: {nuevo}. {resp}"}
 
 @app.post("/api/unlock")
@@ -1177,7 +1120,7 @@ async def api_feedback_list(clave: str = ""):
     return {"items": out or ["Sin feedbacks aún. 🎉"]}
 
 @app.post("/api/upload")
-async def api_upload(archivo: UploadFile = File(None), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("0"), texto_manual: str = Form(""), visibilidad: str = Form("publico"), departamento: str = Form("Otro"), responsable_nombre: str = Form(""), responsable_correo: str = Form("")):
+async def api_upload(archivo: UploadFile = File(None), categoria: str = Form("Avisos"), vigencia: str = Form(""), reemplazar: str = Form("0"), texto_manual: str = Form("")):
     texto = texto_manual.strip()
     if archivo is not None:
         nombre_orig = archivo.filename or "doc.txt"
@@ -1212,15 +1155,13 @@ async def api_upload(archivo: UploadFile = File(None), categoria: str = Form("Av
             if fn.endswith(f"_{categoria}.txt"):
                 os.remove(os.path.join(CARPETA, fn))
                 github_borrar(f"datos_bot/{fn}")
-    depto_slug = re.sub(r'[^A-Za-z0-9]', '_', departamento)
-    sufijo_vis = "_interno" if visibilidad == "interno" else ""
-    nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + depto_slug + "_" + categoria + sufijo_vis + ".txt"
+    nuevo = datetime.now().strftime("%Y%m%d_%H%M") + "_" + categoria + ".txt"
     cab = f"=== {categoria} | Subido: {datetime.now().strftime('%d/%m/%Y')} | Vigente hasta: {vigencia or 'sin límite'} ===\n"
     with open(os.path.join(CARPETA, nuevo), "w", encoding="utf-8") as f:
         f.write(cab + texto)
     resp = github_subir(f"datos_bot/{nuevo}", (cab + texto).encode("utf-8"))
-    import threading
-    threading.Thread(target=_indexar_archivo_robusto, args=(os.path.join(CARPETA, nuevo),), daemon=True).start()
+    import asyncio as _aio
+    _aio.create_task(_indexar_async(os.path.join(CARPETA, nuevo), "publico"))
     return {"estado": f"✅ Guardado como {nuevo}. {resp}"}
 
 @app.post("/api/delete")
@@ -1938,9 +1879,3 @@ async def vectorial_stats():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 7860)))
-
-
-# ===== NOTA DE VERSIÓN =====
-# Fecha: 2026-10-06_1908
-# Cambios: Fix detección francés con word-boundary + Fix referencia _indexar_archivo_robusto
-# ===========================

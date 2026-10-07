@@ -1,0 +1,319 @@
+diff --git a/web_app.py b/web_app.py
+index 1ea14bb..eff77f5 100644
+--- a/web_app.py
++++ b/web_app.py
+@@ -22,7 +22,7 @@ import uvicorn
+ from apscheduler.schedulers.asyncio import AsyncIOScheduler
+ import httpx
+ import chromadb
+-from sentence_transformers import SentenceTransformer
++
+ from database import log_upload, log_ai_usage, get_usage_report
+ 
+ scheduler = AsyncIOScheduler()
+@@ -90,6 +90,17 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+ GEMINI_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
+ GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+ OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
++OPENROUTER_KEYS = [
++    os.environ.get("OPENROUTER_API_KEY_11", ""),
++    os.environ.get("OPENROUTER_API_KEY_2", ""),
++    os.environ.get("OPENROUTER_API_KEY_3", ""),
++    os.environ.get("OPENROUTER_API_KEY_4", ""),
++    os.environ.get("OPENROUTER_API_KEY", ""),
++]
++OPENROUTER_KEYS = [k for k in OPENROUTER_KEYS if k and k.startswith("sk-or-v1-")]
++
++FACULTAD_NOMBRE = os.environ.get("FACULTAD_NOMBRE", "Facultad de Idiomas")
++FACULTAD_SIGLAS = os.environ.get("FACULTAD_SIGLAS", "UABC")
+ OR_URL = "https://openrouter.ai/api/v1/chat/completions"
+ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+@@ -397,14 +408,18 @@ def _cargar_docs(rol="externo"):
+                     continue
+     return docs
+ 
+-_embedder = None
+-_chroma_collection = None
+ 
++
++_embedder = None
+ def get_embedder():
+     global _embedder
+     if _embedder is None:
++        from sentence_transformers import SentenceTransformer
+         _embedder = SentenceTransformer('all-MiniLM-L6-v2')
+     return _embedder
++def get_embedding(texto):
++    return get_embedder().encode(texto).tolist()
++_chroma_collection = None
+ 
+ def get_chroma():
+     global _chroma_collection
+@@ -412,7 +427,6 @@ def get_chroma():
+         client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
+         _chroma_collection = client.get_or_create_collection("uabc_info")
+     return _chroma_collection
+-
+ def cargar_contexto(pregunta, rol="externo"):
+     partes = []
+     try:
+@@ -427,10 +441,12 @@ def cargar_contexto(pregunta, rol="externo"):
+     except Exception:
+         pass
+     try:
+-        collection = get_chroma()
++        vector = get_embedding(pregunta)
++        if vector is None:
++            return ""
++        client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
++        collection = client.get_or_create_collection("uabc_info")
+         if collection.count() > 0:
+-            embedder = get_embedder()
+-            vector = embedder.encode(pregunta).tolist()
+             where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": "publico"}
+             results = collection.query(
+                 query_embeddings=[vector], n_results=8,
+@@ -467,7 +483,7 @@ def sistema_prompt(contexto, rol="externo"):
+     else:
+         extra = " El usuario es de la comunidad UABC (@uabc.edu.mx): puedes incluir avisos internos de clases, tareas y extensiones. "
+     return (
+-        f"Hoy es {fecha_hoy_es()}. Eres UABCBot Idiomas, asistente virtual de la Facultad de Idiomas de la UABC en Mexicali. "
++        f"Hoy es {fecha_hoy_es()}. Eres UABCBot {FACULTAD_SIGLAS}, asistente virtual de {FACULTAD_NOMBRE} de la UABC en Mexicali. "
+         "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales, claros y concisos (máximo ~120 palabras salvo que pidan detalle). "
+         "Si preguntan por COSTOS o PRECIOS, da la cifra exacta que aparezca en la INFORMACIÓN DISPONIBLE (monto, moneda y a quién aplica); si no aparece, indica consultar la convocatoria vigente en cecuabc.com o al 686 841-82-91 ext. 300. "
+         "NUNCA repitas la pregunta del usuario ni respondas con otra pregunta; entrega siempre información concreta. "
+@@ -544,7 +560,7 @@ def llamar_vision(url, key, modelos, b64, mime, prompt):
+ def _vision_gemini(cliente, data, mime, prompt):
+     if not cliente:
+         return ""
+-    for modelo in ("gemini-3.8-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"):
++    for modelo in (MODELOS_GEMINI[:3] if MODELOS_GEMINI else ["gemini-3.8-flash"]):
+         try:
+             r = cliente.models.generate_content(
+                 model=modelo,
+@@ -608,16 +624,22 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
+     lang = lang_pref if lang_pref in ("es", "en", "fr") else lang_detect
+     cost_keywords = ("cuanto", "cuánto", "cuesta", "costo", "precio", "inscri")
+     memory_keywords = ("credito", "titular", "carrera", "tsu")
++    # NUEVO: Si preguntan por personas/contactos, saltar memoria y usar búsqueda vectorial
++    persona_keywords = ("encargado", "encargada", "quien es", "quién es", "con quien", "con quién",
++                        "contacto", "directorio", "correo de", "telefono de", "teléfono de",
++                        "ing.", "lic.", "mtro.", "mtra.", "dr.", "dra.")
+     es_costo = any(k in p for k in cost_keywords)
+-    # Skip memory only if it's a cost question and does NOT contain memory-trigger words
+-    if es_costo and not any(k in p for k in memory_keywords):
+-        pass  # skip memory
+-    else:
+-        for claves, trad in MEMORIA_OFICIAL:
+-            if any(k in p for k in claves):
+-                if lang_pref not in ("es", "en", "fr"):
+-                    lang = "es"
+-                return trad.get(lang, trad["es"]), lang
++    es_persona = any(k in p for k in persona_keywords)
++
++    if not es_persona:  # Solo usar memoria si NO es pregunta sobre personas
++        if es_costo and not any(k in p for k in memory_keywords):
++            pass  # skip memory
++        else:
++            for claves, trad in MEMORIA_OFICIAL:
++                if any(k in p for k in claves):
++                    if lang_pref not in ("es", "en", "fr"):
++                        lang = "es"
++                    return trad.get(lang, trad["es"]), lang
+     clave = p.strip()[:120] + f"|{rol}"
+     cache = _cargar_cache()
+     if clave in cache:
+@@ -629,37 +651,32 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
+     hist = []
+     for m in (historial or []):
+         if isinstance(m, dict) and isinstance(m.get("content"), str):
+-            hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})
+-    # Dynamic model selection with fallback per provider
+-    # OpenRouter
++            hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})    # Dynamic model selection with fallback per provider
+     texto = None
+-    if MODELOS_OPENROUTER:
+-        modelos_or = MODELOS_OPENROUTER
+-        free_models = [m for m in modelos_or if m.endswith(":free") and any(word in m for word in ["coder", "nemotron", "qwen"])]
+-        if free_models:
+-            modelos_or = free_models
+-        texto = llamar_openai(sp, hist, pregunta_final, OR_URL, OR_KEY, modelos_or[:3])
+-    # Gemini
+-    if not _es_valida(texto) and MODELOS_GEMINI:
+-        for modelo in MODELOS_GEMINI:
+-            if not cliente_gemini and not cliente_gemini2:
++    # 1. Gemini 1
++    if not _es_valida(texto) and MODELOS_GEMINI and cliente_gemini:
++        for modelo in MODELOS_GEMINI[:2]:
++            texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final, modelo)
++            if _es_valida(texto):
++                break
++    # 2. Gemini 2
++    if not _es_valida(texto) and MODELOS_GEMINI and cliente_gemini2:
++        for modelo in MODELOS_GEMINI[:2]:
++            texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final, modelo)
++            if _es_valida(texto):
+                 break
+-            # Try primary client
+-            if cliente_gemini:
+-                texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final, modelo)
+-                if _es_valida(texto):
+-                    break
+-            # Try secondary client
+-            if not _es_valida(texto) and cliente_gemini2:
+-                texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final, modelo)
+-                if _es_valida(texto):
+-                    break
+-    # Groq
++    # 3. OpenRouter (rota por TODAS las keys)
++    if not _es_valida(texto) and MODELOS_OPENROUTER:
++        for key in OPENROUTER_KEYS:
++            texto = llamar_openai(sp, hist, pregunta_final, OR_URL, key, MODELOS_OPENROUTER[:3])
++            if _es_valida(texto):
++                break
++    # 4. Groq
+     if not _es_valida(texto) and MODELOS_GROQ:
+-        # Filter out whisper, prompt-guard, safeguard models
+-        groq_models = [m for m in MODELOS_GROQ if not any(x in m.lower() for x in ["whisper", "prompt-guard", "safeguard"])]
++        groq_models = [m for m in MODELOS_GROQ if not any(x in m.lower() for x in ["whisper", "guard", "safeguard"])]
+         if groq_models:
+             texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, groq_models)
++
+     # If still not valid, fallback to document response
+     if not _es_valida(texto):
+         fb = respuesta_de_documentos(pregunta, rol)
+@@ -688,16 +705,21 @@ def transcribir_groq(data):
+         return ""
+ 
+ def transcribir(audio_bytes):
++    # 1. Groq (especializado en audio)
++    t = transcribir_groq(audio_bytes)
++    if t:
++        return t, detectar_idioma(t)
++    # 2-3. Gemini como respaldo
+     for cliente in (cliente_gemini, cliente_gemini2):
+         if not cliente:
+             continue
+-        for mime in ("audio/webm", "audio/wav", "audio/mp3", "audio/ogg"):
++        for mime in ("audio/webm", "audio/wav", "audio/mp3"):
+             try:
+                 r = cliente.models.generate_content(
+-                    model="gemini-3.8-flash",
++                    model=(MODELOS_GEMINI[0] if MODELOS_GEMINI else "gemini-3.8-flash"),
+                     contents=[
+                         gtypes.Part(inline_data=gtypes.Blob(data=audio_bytes, mime_type=mime)),
+-                        "Transcribe textualmente este audio (español, inglés o francés). Devuelve solo la transcripción.",
++                        "Transcribe textalmente este audio. Devuelve solo la transcripción.",
+                     ],
+                 )
+                 t = (r.text or "").strip()
+@@ -705,9 +727,6 @@ def transcribir(audio_bytes):
+                     return t, detectar_idioma(t)
+             except Exception:
+                 continue
+-    t = transcribir_groq(audio_bytes)
+-    if t:
+-        return t, detectar_idioma(t)
+     return "", "es"
+ 
+ async def generar_voz(texto, lang):
+@@ -780,6 +799,11 @@ def _hash(clave, salt):
+ 
+ def normalizar_faq(texto):
+     t = (texto or "").lower()
++    persona_keywords = ("encargado", "encargada", "quien es", "quién es", "con quien", "con quién",
++                        "contacto", "directorio", "correo de", "telefono de", "teléfono de",
++                        "ing.", "lic.", "mtro.", "mtra.", "dr.", "dra.")
++    if any(k in t for k in persona_keywords):
++        return texto or ""
+     for claves, canonica in FAQ:
+         if any(k in t for k in claves) and len(t) < 90:
+             return canonica
+@@ -829,6 +853,40 @@ def leer_uso():
+     except Exception:
+         return []
+ 
++def _indexar_archivo(ruta_archivo, visibilidad="publico"):
++    """Indexa un solo archivo en ChromaDB. Tarda ~2 segundos."""
++    try:
++        from indexar_vectorial import chunk_text, extract_category
++        with open(ruta_archivo, 'r', encoding='utf-8', errors='ignore') as f:
++            content = f.read()
++        lines = [ln for ln in content.split('\n') if not ln.strip().startswith('===')]
++        text = '\n'.join(lines).strip()
++        if not text:
++            return False
++        chunks = chunk_text(text, target_len=500)
++        if not chunks:
++            return False
++        embedder = get_embedder()
++        embeddings = embedder.encode(chunks, show_progress_bar=False).tolist()
++        import os as _os, time as _time
++        fname = _os.path.basename(ruta_archivo)
++        category = extract_category(fname)
++        ts = int(_time.time())
++        ids = [f"{fname}_{i}_{ts}" for i in range(len(embeddings))]
++        metadatas = [{"fuente": "maestro", "archivo": fname, "categoria": category, "visibilidad": visibilidad} for _ in embeddings]
++        collection = get_chroma()
++        collection.add(embeddings=embeddings, documents=chunks, metadatas=metadatas, ids=ids)
++        print(f"✅ Indexado: {fname} ({len(chunks)} fragmentos)")
++        return True
++    except Exception as e:
++        print(f"❌ Error indexado: {e}")
++        return False
++
++async def _indexar_async(ruta_archivo, visibilidad):
++    import asyncio as _aio
++    loop = _aio.get_event_loop()
++    await loop.run_in_executor(None, _indexar_archivo, ruta_archivo, visibilidad)
++
+ def guardar_aviso(texto, categoria="Avisos", visibilidad="publico", departamento="Otro",
+                   responsable_nombre="", responsable_correo=""):
+     depto_slug = re.sub(r'[^A-Za-z0-9]', '_', departamento)
+@@ -956,6 +1014,8 @@ async def voice_note(audio: UploadFile = File(...), categoria: str = Form("Aviso
+     if not texto:
+         return {"estado": "⚠️ No logré escuchar la nota."}
+     nuevo, resp = guardar_aviso(texto, categoria)
++    import asyncio as _aio
++    _aio.create_task(_indexar_async(os.path.join(CARPETA, nuevo), "publico"))
+     return {"estado": f"✅ Nota de voz publicada: {nuevo}. {resp}"}
+ 
+ @app.post("/api/unlock")
+@@ -1100,6 +1160,8 @@ async def api_upload(archivo: UploadFile = File(None), categoria: str = Form("Av
+     with open(os.path.join(CARPETA, nuevo), "w", encoding="utf-8") as f:
+         f.write(cab + texto)
+     resp = github_subir(f"datos_bot/{nuevo}", (cab + texto).encode("utf-8"))
++    import asyncio as _aio
++    _aio.create_task(_indexar_async(os.path.join(CARPETA, nuevo), "publico"))
+     return {"estado": f"✅ Guardado como {nuevo}. {resp}"}
+ 
+ @app.post("/api/delete")
+@@ -1262,7 +1324,7 @@ PAGINA = """
+ <head>
+ <meta charset="UTF-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+-<title>UABCBot Idiomas — Facultad de Idiomas de la UABC en Mexicali</title>
++<title>UABCBot {FACULTAD_SIGLAS} — {FACULTAD_NOMBRE} de la UABC en Mexicali</title>
+ <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+ <style>
+   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+@@ -1339,7 +1401,7 @@ PAGINA = """
+   <main>
+     <header>
+       <img src="/logo.png" alt="logo">
+-      <div><h1>UABCBot Idiomas</h1><p id="hsub">Facultad de Idiomas de la UABC en Mexicali</p></div>
++      <div><h1>UABCBot {FACULTAD_SIGLAS}</h1><p id="hsub">{FACULTAD_NOMBRE} de la UABC en Mexicali</p></div>
+       <div class="langs">
+         <button id="Lauto" class="on">AUTO</button><button id="Les">ES</button><button id="Len">EN</button><button id="Lfr">FR</button>
+       </div>
+@@ -1796,7 +1858,8 @@ applyFont(); welcome(); loadList(); refreshWho(); inp.focus();
+ 
+ @app.get("/")
+ async def inicio():
+-    return HTMLResponse(PAGINA)
++    pagina_render = PAGINA.replace("{FACULTAD_SIGLAS}", FACULTAD_SIGLAS).replace("{FACULTAD_NOMBRE}", FACULTAD_NOMBRE)
++    return HTMLResponse(pagina_render)
+ 
+ @app.get("/api/cache/clear_all")
+ async def cache_clear_all():

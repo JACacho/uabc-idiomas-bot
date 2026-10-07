@@ -54,12 +54,9 @@ def _tiene_fecha_pasada(texto):
     meses = {"enero":1,"febrero":2,"marzo":3,"abril":4,"mayo":5,"junio":6,
              "julio":7,"agosto":8,"septiembre":9,"octubre":10,"noviembre":11,"diciembre":12}
     # Fechas tipo "18 de agosto" (asume año actual)
-    # NO bloquear si es hoy, mañana o ayer (margen de 1 día)
-    ayer = hoy - timedelta(days=1)
     for d, m in re.findall(r'(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)', texto.lower()):
         try:
-            fecha_texto = _date(hoy.year, meses[m], int(d))
-            if fecha_texto < ayer:
+            if _date(hoy.year, meses[m], int(d)) < hoy:
                 return True
         except Exception:
             pass
@@ -311,35 +308,17 @@ def normalizar_texto(texto):
 def detectar_idioma(texto):
     t = normalizar_texto(texto)
     es_st = ["cuanto", "cuantos", "credito", "creditos", "titular", "titularme", "carrera", "tsu", "requisito", "admision", "horario", "cuesta", "precio", "donde", "como", "que", "para", "por", "con", "hola", "gracias", "necesito", "quiero", "informacion"]
-    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les", "des", "anglais", "alors", "carriere", "peux", "utilizar", "etudier", "trabajar", "quels", "quelles", "cest", "sont", "dans", "porque", "por qué", "comment"]
-    en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i", "would", "like", "to", "study", "french", "english", "do", "you", "for", "me", "is", "are", "the", "my", "can", "help"]
+    fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je ", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les ", "des ", "anglais"]
+    en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i ", "would", "like", "to ", "study", "french", "english", "do ", "you", "for", "me", "is ", "are ", "the ", "my ", "can", "help"]
     
-    # Función auxiliar: busca palabra completa (con word boundary)
-    def tiene_palabra(palabras, texto_norm):
-        for p in palabras:
-            if re.search(r'\b' + re.escape(p) + r'\b', texto_norm):
-                return True
-        return False
-    
-    # Regla 1: Si hay CUALQUIER palabra en español (palabra completa), gana el español
-    if tiene_palabra(es_st, t):
+    # Regla 1: Si hay CUALQUIER palabra en español, gana el español
+    if any(w in t for w in es_st):
         return "es"
-    
-    # Regla 2: Contar coincidencias en francés e inglés
-    hf = sum(1 for w in fr_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    he = sum(1 for w in en_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    if hf >= 1 and hf >= he:
-        return "fr"
-    if he >= 2 and he > hf:
-        return "en"
-    
-    # Regla 3: Por defecto, español
-    return "es"
     
     # Regla 2: Contar coincidencias en francés e inglés
     hf = sum(1 for w in fr_st if w in t)
     he = sum(1 for w in en_st if w in t)
-    if hf >= 1 and hf >= he:
+    if hf >= 2 and hf > he:
         return "fr"
     if he >= 2 and he > hf:
         return "en"
@@ -468,27 +447,13 @@ def cargar_contexto(pregunta, rol="externo"):
         client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
         collection = client.get_or_create_collection("uabc_info")
         if collection.count() > 0:
-            where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": {"$in": ["publico"]}}
+            where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": "publico"}
             results = collection.query(
                 query_embeddings=[vector], n_results=8,
                 where=where_filter, include=["documents"]
             )
             fragmentos = results.get("documents", [[]])[0]
             fragmentos = [f for f in fragmentos if not _tiene_fecha_pasada(f)]
-            # Si la pregunta menciona "hoy", "mañana" o "esta semana", añadir avisos recientes al inicio
-            pregunta_lower = (pregunta or "").lower()
-            if any(k in pregunta_lower for k in ["hoy", "mañana", "manana", "esta semana", "proxim"]):
-                try:
-                    todos = collection.get(include=["documents", "metadatas"])
-                    recientes = []
-                    for doc, meta in zip(todos.get("documents", []), todos.get("metadatas", [])):
-                        archivo = meta.get("archivo", "")
-                        if "20261006" in archivo or "20261007" in archivo:
-                            recientes.append(doc)
-                    if recientes:
-                        fragmentos = recientes[:3] + fragmentos
-                except Exception:
-                    pass
             partes.extend(fragmentos)
     except Exception as e:
         print(f"Error vectorial: {e}")
@@ -522,7 +487,7 @@ def sistema_prompt(contexto, rol="externo"):
         "Responde SIEMPRE en el idioma de la pregunta y en párrafos naturales, claros y concisos (máximo ~120 palabras salvo que pidan detalle). "
         "Si preguntan por COSTOS o PRECIOS, da la cifra exacta que aparezca en la INFORMACIÓN DISPONIBLE (monto, moneda y a quién aplica); si no aparece, indica consultar la convocatoria vigente en cecuabc.com o al 686 841-82-91 ext. 300. "
         "NUNCA repitas la pregunta del usuario ni respondas con otra pregunta; entrega siempre información concreta. "
-        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana' o 'esta semana', SIEMPRE revisa si hay avisos que mencionen esas fechas específicas o un rango que las incluya. Si encuentras un aviso de suspensión o cambio de modalidad vigente para HOY o MAÑANA, DEBES informarlo claramente al usuario como PRIMERA respuesta. NUNCA digas 'no hay información' si existe un aviso vigente que cubra esas fechas. "
+        "FECHAS Y EVENTOS: si preguntan por 'hoy', 'mañana', 'esta semana', 'la próxima semana' o 'pronto', menciona PRIMERO los eventos y avisos con fecha dentro de los próximos 14 días a partir de hoy (con fecha, hora y lugar si los tienes); NUNCA cites fechas que ya pasaron ni te contradigas. "
         "NUNCA menciones eventos, conferencias o talleres cuya fecha ya pasó. Si solo encuentras eventos pasados, indica que no hay eventos próximos por ahora. "
         "REGLAS DE ORO: responde ÚNICAMENTE a la pregunta del usuario; NUNCA reproduzcas el contexto como lista de preguntas y respuestas; "
         "NUNCA copies nombres de archivo, encabezados con ===, ni palabras como DOCUMENTO o CONTEXTO; reformula con tus palabras y usa solo datos disponibles. "
@@ -673,7 +638,7 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
             for claves, trad in MEMORIA_OFICIAL:
                 if any(k in p for k in claves):
                     if lang_pref not in ("es", "en", "fr"):
-                        lang = lang_detect
+                        lang = "es"
                     return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()
@@ -888,7 +853,7 @@ def leer_uso():
     except Exception:
         return []
 
-def _indexar_archivo_robusto(ruta_archivo, visibilidad="publico"):
+def _indexar_archivo(ruta_archivo, visibilidad="publico"):
     """Indexa un solo archivo en ChromaDB. Tarda ~2 segundos."""
     try:
         from indexar_vectorial import chunk_text, extract_category
@@ -1941,6 +1906,7 @@ if __name__ == "__main__":
 
 
 # ===== NOTA DE VERSIÓN =====
-# Fecha: 2026-10-06_1908
-# Cambios: Fix detección francés con word-boundary + Fix referencia _indexar_archivo_robusto
+# Fecha: 2026-10-06_1832
+# Cambios: Fix detección de francés + Fix 'hay clases mañana' + Fix visibilidad
+# Estado: Estable después de fix de indexado con subprocess
 # ===========================

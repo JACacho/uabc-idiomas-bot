@@ -6,7 +6,17 @@ import os
 import time
 import re
 import chromadb
+import requests
+from dotenv import load_dotenv
+load_dotenv()
 from sentence_transformers import SentenceTransformer
+_embedder = None
+def get_embedder():
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformer('all-MiniLM-L6-v2')
+    return _embedder
+
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATOS_BOT_DIR = os.path.join(BASE, "datos_bot")
@@ -78,8 +88,6 @@ def main():
     collection = client.get_or_create_collection(COLLECTION_NAME)
     
     # Cargar modelo de embeddings
-    print("Cargando modelo de embeddings...")
-    embedder = SentenceTransformer('all-MiniLM-L6-v2')
     
     # Procesar archivos
     files_to_process = []
@@ -116,13 +124,20 @@ def main():
             print(f"  {fname}: no se generaron fragmentos, omitiendo.")
             continue
         
-        # Generar embeddings
-        embeddings = embedder.encode(chunks, show_progress_bar=False)
-        
-        # Preparar datos para ChromaDB
+        # Generar embeddings con SentenceTransformer
+        embedder = get_embedder()
+        embeddings = []
+        for i in range(0, len(chunks), 50):
+            batch = chunks[i:i+50]
+            batch_emb = embedder.encode(batch, show_progress_bar=False).tolist()
+            embeddings.extend(batch_emb)
+            print(f"  Procesados {min(i+50, len(chunks))}/{len(chunks)} de {fname}")
+        # Filtrar chunks que no tuvieron embedding
+        chunks = chunks[:len(embeddings)]
+
+        ids = [f"{fname}_{i}" for i in range(len(embeddings))]
         es_interno = any(x in fname.lower() for x in ["_interno", "_clases", "_tareas", "organigrama_interno", "_academia"])
         visibilidad = "interno" if es_interno else "publico"
-        ids = [f"{fname}_{i}" for i in range(len(chunks))]
         metadatas = [
             {
                 "fuente": source,
@@ -130,19 +145,18 @@ def main():
                 "categoria": category,
                 "visibilidad": visibilidad
             }
-            for _ in chunks
+            for _ in embeddings
         ]
-        
+
         # Añadir a la colección
         collection.add(
-            embeddings=embeddings.tolist(),
+            embeddings=embeddings,
             documents=chunks,
             metadatas=metadatas,
             ids=ids
         )
         total_chunks += len(chunks)
         print(f"  ✅ {fname}: {len(chunks)} fragmentos indexados (fuente: {source}, categoría: {category})")
-    
     elapsed = time.time() - start
     print("\nIndexación completada.")
     print(f"Total de archivos procesados: {total_files}")
