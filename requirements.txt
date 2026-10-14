@@ -4,7 +4,7 @@ python-multipart
 gradio
 streamlit
 google-genai
-edge-tts
+gTTS
 duckduckgo-search
 pypdf
 requests
@@ -15,3 +15,6 @@ httpx
 python-dotenv
 chromadb
 sentence-transformers
+optimum
+onnxruntime
+qdrant-client

@@ -1,0 +1,97 @@
+# === BACKUPS Y VERSIONES ANTIGUAS ===
+web_app_backup_*.py
+web_app_backup_pre_pull_*.py
+web_app_DISK_VERSION.py
+web_app_EDITOR_VERSION.py
+web_app_roto_*.py
+web_app_RESPALDO_*.py
+web_app_INTENTO_*.py
+web_app_fixed.py
+web_app - copia*.py
+requirements_backup_*.txt
+requirements.bak
+requirements_backup_.txt
+indexar_vectorial_backup_*.py
+
+# === SCRIPTS SUELTOS (no se usan en runtime) ===
+apply_fix*.py
+fix_*.py
+temp_*.py
+temp.txt
+test_*.py
+test_audio.mp3
+migrate.py
+scraper*.py
+scraper_y_dedup.py
+setup_wizard.py
+admin.py
+config.py
+database_content.py
+sistema.py
+exportar_chroma.py
+importar_a_qdrant.py
+crear_indice_qdrant.py
+replace_log_uso.py
+added.txt
+removed.txt
+diff.txt
+diff1.txt
+reporte_duplicados.txt
+backup_v26_filename.txt
+
+# === DATOS PESADOS (se restauran desde GitHub en runtime) ===
+chroma_db/
+chroma_export.json
+datos_scraper/
+datos_bot/
+audios/
+capturas/
+conversaciones/
+feedback/
+posters/
+temp/
+_convs_locales_backup/
+salud-mexxicali-bot/
+
+# === BASES DE DATOS Y CACHÉS (se restauran desde GitHub) ===
+*.db
+*.db.backup
+*.jsonl
+uso_backup_*.jsonl
+cache.json
+topfaq_cache.json
+catalogo.json
+responsables.json
+
+# === PYTHON / ENTORNOS ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.Python
+
+# === SECRETOS (van como env vars en Cloud Run) ===
+.env
+.env.*
+*.key
+*credentials*.json
+
+# === GIT Y EDITOR ===
+.git/
+.gitignore
+.gitattributes
+
+# === VS CODE / DOCS ===
+.vscode/
+.idea/
+*.md
+INSTRUCTIONS_CLINE.md
+
+# === BATS Y OTROS ===
+install.bat
+start.bat
+.FullName
+bot.db

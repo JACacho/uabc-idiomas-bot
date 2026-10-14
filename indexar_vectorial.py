@@ -14,7 +14,11 @@ _embedder = None
 def get_embedder():
     global _embedder
     if _embedder is None:
-        _embedder = SentenceTransformer('all-MiniLM-L6-v2')
+        _embedder = SentenceTransformer(
+            'all-MiniLM-L6-v2',
+            backend='onnx',
+            model_kwargs={'file_name': 'model.onnx'}
+        )
     return _embedder
 
 

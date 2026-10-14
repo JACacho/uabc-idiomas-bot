@@ -22,8 +22,11 @@ import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import httpx
 import chromadb
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, MatchAny
 
 from database import log_upload, log_ai_usage, get_usage_report
+
 
 scheduler = AsyncIOScheduler()
 
@@ -86,7 +89,12 @@ CACHE = os.path.join(BASE, "cache.json")
 USO = os.path.join(BASE, "uso.jsonl")
 USERS = os.path.join(BASE, "users.json")
 TOPFAQ_CACHE = os.path.join(BASE, "topfaq_cache.json")
-CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "fimxl2026")
+QDRANT_URL = os.environ.get("QDRANT_URL", "").strip()
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "").strip()
+CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "")
+CLAVE_DIRECCION = os.environ.get("CLAVE_DIRECCION", "")
+CLAVE_FINANZAS = os.environ.get("CLAVE_FINANZAS", "")
+CLAVE_SISTEMAS = os.environ.get("CLAVE_SISTEMAS", "")
 GH_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO = os.environ.get("GITHUB_REPO", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -307,44 +315,87 @@ def normalizar_texto(texto):
     """Convierte a minúsculas y elimina acentos/diéresis para comparación."""
     return ''.join(c for c in unicodedata.normalize('NFD', texto or '')
                    if unicodedata.category(c) != 'Mn').lower()
+# ============ PRECIOS Y METADATA DE USO ============
+PRECIOS_MODELOS = {
+    "gemini-2.5-flash": {"entrada": 0.30, "salida": 2.50},
+    "gemini-2.0-flash": {"entrada": 0.10, "salida": 0.40},
+    "gemini-1.5-flash": {"entrada": 0.075, "salida": 0.30},
+    "gemma": {"entrada": 0.05, "salida": 0.10},
+    "llama-3.3-70b": {"entrada": 0.59, "salida": 0.79},
+    "llama-3.1-8b": {"entrada": 0.05, "salida": 0.08},
+    "llama-3.2": {"entrada": 0.05, "salida": 0.08},
+    "qwen": {"entrada": 0.05, "salida": 0.10},
+    "nemotron": {"entrada": 0.00, "salida": 0.00},
+    "deepseek": {"entrada": 0.14, "salida": 0.28},
+    "mistral": {"entrada": 0.10, "salida": 0.30},
+    "default": {"entrada": 0.15, "salida": 0.60},
+}
+
+def _estimar_precio(modelo, tokens):
+    """Estima costo USD. Modelos :free => $0."""
+    if not modelo:
+        return 0.0
+    if ":free" in modelo.lower():
+        return 0.0
+    m = modelo.lower()
+    for clave, precios in PRECIOS_MODELOS.items():
+        if clave in m:
+            promedio = (precios["entrada"] + precios["salida"]) / 2
+            return (tokens / 1_000_000) * promedio
+    d = PRECIOS_MODELOS["default"]
+    return (tokens / 1_000_000) * ((d["entrada"] + d["salida"]) / 2)
+
+def _detectar_area(texto):
+    """Clasifica la pregunta por área para reportes."""
+    t = normalizar_texto(texto)
+    areas = [
+        (("admision", "inscri", "ingresar", "ficha", "convocatoria", "nuevo ingreso"), "Admision"),
+        (("cec", "curso", "horario", "ingles", "frances", "aleman", "italiano", "idioma"), "CEC"),
+        (("escolar", "constancia", "kardex", "calificacion", "historial", "materia"), "Escolar"),
+        (("egresado", "bolsa", "trabajo", "titulo", "titulacion", "servicio social", "practica"), "Egresados"),
+        (("evento", "conferencia", "platica", "taller", "seminario", "congreso"), "Eventos"),
+    ]
+    for claves, area in areas:
+        if any(k in t for k in claves):
+            return area
+    return "Otro"
+
+_ultimo_uso = {}  # Metadata de la última respuesta
+# =====================================================
 
 def detectar_idioma(texto):
     t = normalizar_texto(texto)
     es_st = ["cuanto", "cuantos", "credito", "creditos", "titular", "titularme", "carrera", "tsu", "requisito", "admision", "horario", "cuesta", "precio", "donde", "como", "que", "para", "por", "con", "hola", "gracias", "necesito", "quiero", "informacion"]
     fr_st = ["bonjour", "merci", "combien", "pour", "avec", "vous", "diplom", "traduction", "salut", "credit", "je", "etud", "francais", "voud", "veux", "voaux", "quel", "quelle", "aime", "les", "des", "anglais", "alors", "carriere", "peux", "utilizar", "etudier", "trabajar", "quels", "quelles", "cest", "sont", "dans", "porque", "por qué", "comment"]
     en_st = ["hello", "thank", "how", "many", "degree", "translation", "what", "when", "where", "i", "would", "like", "to", "study", "french", "english", "do", "you", "for", "me", "is", "are", "the", "my", "can", "help"]
-    
-    # Función auxiliar: busca palabra completa (con word boundary)
-    def tiene_palabra(palabras, texto_norm):
-        for p in palabras:
-            if re.search(r'\b' + re.escape(p) + r'\b', texto_norm):
-                return True
-        return False
-    
-    # Regla 1: Si hay CUALQUIER palabra en español (palabra completa), gana el español
-    if tiene_palabra(es_st, t):
+
+    # Cuenta coincidencias de palabra completa (con word boundary)
+    def cuenta(palabras, texto_norm):
+        return sum(1 for p in palabras if re.search(r'\b' + re.escape(p) + r'\b', texto_norm))
+
+    h_es = cuenta(es_st, t)
+    h_fr = cuenta(fr_st, t)
+    h_en = cuenta(en_st, t)
+
+    # Regla 1: Español gana si tiene 2+ señales claras
+    if h_es >= 2:
         return "es"
-    
-    # Regla 2: Contar coincidencias en francés e inglés
-    hf = sum(1 for w in fr_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    he = sum(1 for w in en_st if re.search(r'\b' + re.escape(w) + r'\b', t))
-    if hf >= 1 and hf >= he:
+    # Regla 2: Francés gana si tiene más señales que español
+    if h_fr > h_es:
         return "fr"
-    if he >= 2 and he > hf:
+    # Regla 3: Inglés gana si tiene 2+ señales y más que los otros
+    if h_en >= 2 and h_en > h_es and h_en > h_fr:
         return "en"
-    
-    # Regla 3: Por defecto, español
-    return "es"
-    
-    # Regla 2: Contar coincidencias en francés e inglés
-    hf = sum(1 for w in fr_st if w in t)
-    he = sum(1 for w in en_st if w in t)
-    if hf >= 1 and hf >= he:
+    # Regla 4: Español gana si tiene 1 señal y no hay señales de otros idiomas
+    if h_es >= 1 and h_fr == 0 and h_en == 0:
+        return "es"
+    # Regla 5: Francés si tiene al menos 1 señal
+    if h_fr >= 1:
         return "fr"
-    if he >= 2 and he > hf:
+    # Regla 6: Inglés si tiene 2+ señales
+    if h_en >= 2:
         return "en"
-    
-    # Regla 3: Por defecto, español
+    # Regla 7: Por defecto, español
     return "es"
 
 def _fechas_doc(texto):
@@ -440,14 +491,91 @@ def get_embedder():
     return _embedder
 def get_embedding(texto):
     return get_embedder().encode(texto).tolist()
-_chroma_collection = None
+_qdrant_adapter = None
+
+class QdrantChromaAdapter:
+    """Adaptador que imita la interfaz de ChromaDB usando Qdrant."""
+    
+    def __init__(self, client, collection_name="uabc_info"):
+        self.client = client
+        self.collection_name = collection_name
+    
+    def count(self):
+        try:
+            return self.client.count(collection_name=self.collection_name).count
+        except Exception as e:
+            print(f"[QdrantAdapter] Error count: {e}")
+            return 0
+    
+    def _chroma_where_to_qdrant(self, where):
+        if not where:
+            return None
+        conditions = []
+        for key, value in where.items():
+            if isinstance(value, dict) and "$in" in value:
+                conditions.append(FieldCondition(key=key, match=MatchAny(any=list(value["$in"]))))
+            elif isinstance(value, dict) and "$eq" in value:
+                conditions.append(FieldCondition(key=key, match=MatchValue(value=value["$eq"])))
+            else:
+                conditions.append(FieldCondition(key=key, match=MatchValue(value=value)))
+        return Filter(must=conditions) if conditions else None
+    
+    def query(self, query_embeddings, n_results=8, where=None, include=None):
+        vector = query_embeddings[0] if isinstance(query_embeddings, list) else query_embeddings
+        qdrant_filter = self._chroma_where_to_qdrant(where)
+        result = self.client.query_points(
+            collection_name=self.collection_name,
+            query=vector,
+            limit=n_results,
+            query_filter=qdrant_filter,
+            with_payload=True,
+        )
+        points = result.points if hasattr(result, "points") else result
+        documents = [[p.payload.get("document", "") for p in points]]
+        metadatas = [[{k: v for k, v in p.payload.items() if k != "document"} for p in points]]
+        return {"documents": documents, "metadatas": metadatas}
+    
+    def add(self, embeddings, documents, metadatas, ids):
+        import hashlib as _hashlib
+        points = []
+        for i in range(len(ids)):
+            id_str = str(ids[i])
+            id_int = int(_hashlib.md5(id_str.encode()).hexdigest()[:8], 16)
+            payload = {"document": documents[i]}
+            if metadatas[i]:
+                payload.update(metadatas[i])
+            vector = embeddings[i]
+            if hasattr(vector, "tolist"):
+                vector = vector.tolist()
+            points.append(PointStruct(id=id_int, vector=vector, payload=payload))
+        self.client.upsert(collection_name=self.collection_name, points=points)
+    
+    def get(self, include=None, limit=10000):
+        result, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        documents = [r.payload.get("document", "") for r in result]
+        metadatas = [{k: v for k, v in r.payload.items() if k != "document"} for r in result]
+        return {"documents": documents, "metadatas": metadatas}
+
 
 def get_chroma():
-    global _chroma_collection
-    if _chroma_collection is None:
-        client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
-        _chroma_collection = client.get_or_create_collection("uabc_info")
-    return _chroma_collection
+    global _qdrant_adapter
+    if _qdrant_adapter is None:
+        if not QDRANT_URL or not QDRANT_API_KEY:
+            print("[QdrantAdapter] ADVERTENCIA: QDRANT_URL o QDRANT_API_KEY vacíos en .env")
+        client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=60.0,
+            check_compatibility=False,
+            prefer_grpc=False,
+        )
+        _qdrant_adapter = QdrantChromaAdapter(client, "uabc_info")
+    return _qdrant_adapter
 def cargar_contexto(pregunta, rol="externo"):
     partes = []
     try:
@@ -465,8 +593,7 @@ def cargar_contexto(pregunta, rol="externo"):
         vector = get_embedding(pregunta)
         if vector is None:
             return ""
-        client = chromadb.PersistentClient(path=os.path.join(BASE, "chroma_db"))
-        collection = client.get_or_create_collection("uabc_info")
+        collection = get_chroma()
         if collection.count() > 0:
             where_filter = {"visibilidad": {"$in": ["publico", "interno"]}} if rol == "interno" else {"visibilidad": {"$in": ["publico"]}}
             results = collection.query(
@@ -544,9 +671,15 @@ def llamar_gemini(cliente, sp, hist, pregunta, modelo):
             contents=contents,
             config={"system_instruction": sp, "temperature": 0.1},
         )
+        if (r.text or "").strip():
+            _ultimo_uso["modelo"] = modelo
+            _ultimo_uso["proveedor"] = "gemini"
+            _ultimo_uso["exitoso"] = True
         return (r.text or "").strip() or None
     except Exception as e:
-        print(f"Error Gemini: {e}")
+        err_str = str(e)
+        if "404" not in err_str and "503" not in err_str:
+            print(f"Error Gemini: {err_str}")
         return None
 
 def llamar_openai(sp, hist, pregunta, url, key, modelos):
@@ -651,10 +784,13 @@ def _guardar_cache(c):
 
 def _es_cacheable(texto):
     t = (texto or "").lower()
-    return not (texto.startswith("⚠️") or texto.startswith("📅") or texto.startswith("Según la información oficial") or len(texto) < 60 or "ayudarte hoy" in t or "no está en el contexto" in t or "===" in texto or "documento " in t or "manual de conocimiento" in t or len(texto) > 900)
+    return not (t.startswith("⚠️") or t.startswith("📅") or t.startswith("Según la información oficial") or len(t) < 60 or "ayudarte hoy" in t or "no está en el contexto" in t or "===" in t or "documento " in t or "manual de conocimiento" in t or len(t) > 900)
 
 def responder(pregunta, historial, lang_pref="auto", rol="externo"):
+    global _ultimo_uso
+    _ultimo_uso = {"modelo": None, "proveedor": None, "exitoso": False, "fallback": False, "cache": False, "memoria": False}
     p = (pregunta or "").lower()
+    p_sin = normalizar_texto(pregunta)   # sin acentos para comparaciones
     lang_detect = detectar_idioma(pregunta)
     lang = lang_pref if lang_pref in ("es", "en", "fr") else lang_detect
     cost_keywords = ("cuanto", "cuánto", "cuesta", "costo", "precio", "inscri")
@@ -663,21 +799,29 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     persona_keywords = ("encargado", "encargada", "quien es", "quién es", "con quien", "con quién",
                         "contacto", "directorio", "correo de", "telefono de", "teléfono de",
                         "ing.", "lic.", "mtro.", "mtra.", "dr.", "dra.")
-    es_costo = any(k in p for k in cost_keywords)
-    es_persona = any(k in p for k in persona_keywords)
+    es_costo = any(k in p_sin for k in cost_keywords)
+    es_persona = any(k in p_sin for k in persona_keywords)
 
     if not es_persona:  # Solo usar memoria si NO es pregunta sobre personas
-        if es_costo and not any(k in p for k in memory_keywords):
+        if es_costo and not any(k in p_sin for k in memory_keywords):
             pass  # skip memory
         else:
             for claves, trad in MEMORIA_OFICIAL:
-                if any(k in p for k in claves):
+                if any(k in p_sin for k in claves):
                     if lang_pref not in ("es", "en", "fr"):
                         lang = lang_detect
+                    _ultimo_uso["memoria"] = True
+                    _ultimo_uso["exitoso"] = True
+                    _ultimo_uso["modelo"] = "memoria_oficial"
+                    _ultimo_uso["proveedor"] = "memoria"
                     return trad.get(lang, trad["es"]), lang
     clave = p.strip()[:120] + f"|{rol}"
     cache = _cargar_cache()
     if clave in cache:
+        _ultimo_uso["cache"] = True
+        _ultimo_uso["exitoso"] = True
+        _ultimo_uso["modelo"] = "cache"
+        _ultimo_uso["proveedor"] = "cache"
         return cache[clave][0], cache[clave][1]
     contexto = cargar_contexto(pregunta, rol)
     sp = sistema_prompt(contexto, rol)
@@ -716,6 +860,10 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
     if not _es_valida(texto):
         fb = respuesta_de_documentos(pregunta, rol)
         if fb:
+            _ultimo_uso["fallback"] = True
+            _ultimo_uso["exitoso"] = True
+            _ultimo_uso["modelo"] = "fallback_documentos"
+            _ultimo_uso["proveedor"] = "fallback"
             return fb, lang
     if not _es_valida(texto):
         texto = "⚠️ Los motores de IA están saturados en este momento. Intenta de nuevo en unos segundos."
@@ -764,15 +912,44 @@ def transcribir(audio_bytes):
                 continue
     return "", "es"
 
+def _limpiar_para_tts(texto):
+    """Elimina markdown y símbolos que suenan mal en TTS."""
+    t = texto or ""
+    # Quitar bloques de código
+    t = re.sub(r'```[\s\S]*?```', ' ', t)
+    # Quitar código inline
+    t = re.sub(r'`([^`]+)`', r'\1', t)
+    # Quitar markdown de negritas, itálicas
+    t = re.sub(r'\*\*([^*]+)\*\*', r'\1', t)
+    t = re.sub(r'\*([^*]+)\*', r'\1', t)
+    t = re.sub(r'__([^_]+)__', r'\1', t)
+    t = re.sub(r'_([^_]+)_', r'\1', t)
+    # Quitar headers markdown
+    t = re.sub(r'^#{1,6}\s+', '', t, flags=re.MULTILINE)
+    # Quitar listas markdown (viñetas y números)
+    t = re.sub(r'^\s*[-*+]\s+', '', t, flags=re.MULTILINE)
+    t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.MULTILINE)
+    # Quitar emojis
+    t = re.sub(r'[\U0001F300-\U0001F9FF\u2600-\u27BF]', '', t)
+    # Quitar URLs
+    t = re.sub(r'https?://\S+', ' ', t)
+    # Quitar múltiples espacios/saltos
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
+
 async def generar_voz(texto, lang):
     try:
-        import edge_tts
-        voz = VOCES.get(lang, VOCES["es"])
+        from gtts import gTTS
+        idioma_gtts = {"es": "es", "en": "en", "fr": "fr"}.get(lang, "es")
+        texto_limpio = _limpiar_para_tts(texto)
+        if not texto_limpio:
+            return None
         ruta = os.path.join(tempfile.gettempdir(), "respuesta_uabc.mp3")
-        c = edge_tts.Communicate(texto, voz)
-        await c.save(ruta)
+        tts = gTTS(text=texto_limpio, lang=idioma_gtts, slow=False)
+        tts.save(ruta)
         return ruta
-    except Exception:
+    except Exception as e:
+        print(f"[gTTS] Error: {e}")
         return None
 
 # ================= SERVICIOS =================
@@ -780,7 +957,10 @@ app = FastAPI()
 @app.on_event("startup")
 async def startup_event():
     global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
-    # Update models at startup
+    try:
+        restaurar_desde_github()
+    except Exception as e:
+        print(f"[startup] Error restaurando: {e}")
     await actualizar_modelos()
     await validar_modelos_chat()
     print(f"Modelos disponibles: OpenRouter={len(MODELOS_OPENROUTER)}, Groq={len(MODELOS_GROQ)}, Gemini={len(MODELOS_GEMINI)}")
@@ -788,6 +968,7 @@ async def startup_event():
     if not scheduler.running:
         scheduler.add_job(actualizar_modelos, 'cron', hour=3, minute=0)
         scheduler.add_job(validar_modelos_chat, 'cron', hour=3, minute=5)
+        scheduler.add_job(respaldo_github_completo, 'cron', hour=3, minute=30)
         scheduler.start()
     # Background task for keep-alive
     async def keep_alive_task():
@@ -861,6 +1042,128 @@ def github_subir(ruta_repo, contenido_bytes):
         return "☁️ Respaldo permanente en GitHub listo." if q.status_code in (200, 201) else "⚠️ No se pudo respaldar en GitHub."
     except Exception:
         return "⚠️ No se pudo respaldar en GitHub."
+def github_listar_carpeta(ruta_repo):
+    """Lista archivos en una carpeta del repo de GitHub. Regresa lista de nombres."""
+    if not GH_TOKEN or not GH_REPO:
+        return []
+    try:
+        url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
+        headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
+        r = requests.get(url, headers=headers, timeout=20)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        if not isinstance(data, list):
+            return []
+        return [item["name"] for item in data if item.get("type") == "file"]
+    except Exception as e:
+        print(f"[github_listar_carpeta] Error {ruta_repo}: {e}")
+        return []
+
+def github_descargar(ruta_repo, ruta_local):
+    """Descarga un archivo del repo de GitHub a disco local."""
+    if not GH_TOKEN or not GH_REPO:
+        return False
+    try:
+        url = f"https://api.github.com/repos/{GH_REPO}/contents/{ruta_repo}"
+        headers = {"Authorization": f"token {GH_TOKEN}", "Accept": "application/vnd.github+json"}
+        r = requests.get(url, headers=headers, timeout=20)
+        if r.status_code != 200:
+            return False
+        data = r.json()
+        if "content" not in data:
+            return False
+        contenido = base64.b64decode(data["content"])
+        os.makedirs(os.path.dirname(ruta_local), exist_ok=True)
+        with open(ruta_local, "wb") as f:
+            f.write(contenido)
+        return True
+    except Exception as e:
+        print(f"[github_descargar] Error {ruta_repo}: {e}")
+        return False
+
+def restaurar_desde_github():
+    """Al arrancar, restaura archivos criticos desde GitHub."""
+    print("[respaldo] Restaurando archivos desde GitHub...")
+    archivos = ["uso.jsonl", "uabc_bot.db", "users.json", "cache.json", "topfaq_cache.json"]
+    restaurados = 0
+    for nombre in archivos:
+        ruta_local = os.path.join(BASE, nombre)
+        if github_descargar(nombre, ruta_local):
+            print(f"[respaldo] OK Restaurado: {nombre}")
+            restaurados += 1
+        else:
+            print(f"[respaldo] No encontrado en GitHub: {nombre}")
+    for carpeta, prefijo in [(FEEDBACK, "feedback"), (CAPTURAS, "capturas"), (CONVS, "conversaciones"), (CARPETA, "datos_bot"), (IMGS, "posters"), (AUDIOS, "audios")]:
+        try:
+            nombres = github_listar_carpeta(prefijo)
+            for nombre in nombres:
+                ruta_local = os.path.join(carpeta, nombre)
+                if github_descargar(f"{prefijo}/{nombre}", ruta_local):
+                    restaurados += 1
+        except Exception as e:
+            print(f"[respaldo] Error restaurando {prefijo}: {e}")
+    print(f"[respaldo] Restauracion completa: {restaurados} archivos")
+    return restaurados
+
+def respaldo_github_completo():
+    """Sube a GitHub todos los archivos criticos de datos."""
+    print("[respaldo] Subiendo archivos criticos a GitHub...")
+    archivos = ["uso.jsonl", "uabc_bot.db", "users.json", "cache.json", "topfaq_cache.json"]
+    subidos = 0
+    for nombre in archivos:
+        ruta_local = os.path.join(BASE, nombre)
+        if os.path.exists(ruta_local):
+            with open(ruta_local, "rb") as f:
+                contenido = f.read()
+            resultado = github_subir(nombre, contenido)
+            if "listo" in resultado:
+                subidos += 1
+                print(f"[respaldo] OK Subido: {nombre} ({len(contenido)} bytes)")
+            else:
+                print(f"[respaldo] Fallo: {nombre}")
+    carpetas = [
+        (FEEDBACK, "feedback", (".txt",)),
+        (CAPTURAS, "capturas", (".png",)),
+        (CONVS, "conversaciones", (".json",)),
+        (CARPETA, "datos_bot", (".txt",)),
+        (IMGS, "posters", (".png", ".jpg", ".jpeg", ".webp")),
+        (AUDIOS, "audios", (".mp3",)),
+    ]
+    for carpeta, prefijo, extensiones in carpetas:
+        try:
+            for fn in os.listdir(carpeta):
+                if any(fn.lower().endswith(ext) for ext in extensiones):
+                    ruta = os.path.join(carpeta, fn)
+                    if os.path.isfile(ruta):
+                        with open(ruta, "rb") as f:
+                            github_subir(f"{prefijo}/{fn}", f.read())
+        except Exception as e:
+            print(f"[respaldo] Error {prefijo}: {e}")
+    print(f"[respaldo] Completado. {subidos} archivos principales subidos.")
+    return subidos
+
+def crear_zip_respaldo():
+    """Crea un ZIP con TODOS los datos y lo regresa como bytes."""
+    import io
+    import zipfile
+    from datetime import datetime as _dt
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for nombre in ["uso.jsonl", "uabc_bot.db", "users.json", "cache.json", "topfaq_cache.json", "directorio_encargados.json"]:
+            ruta = os.path.join(BASE, nombre)
+            if os.path.exists(ruta):
+                zf.write(ruta, f"datos/{nombre}")
+        for carpeta, prefijo in [(FEEDBACK, "feedback"), (CAPTURAS, "capturas"), (CONVS, "conversaciones"), (CARPETA, "datos_bot"), (IMGS, "posters"), (AUDIOS, "audios")]:
+            try:
+                for fn in os.listdir(carpeta):
+                    ruta = os.path.join(carpeta, fn)
+                    if os.path.isfile(ruta):
+                        zf.write(ruta, f"{prefijo}/{fn}")
+            except Exception:
+                pass
+        zf.writestr("INFO_RESPALDO.txt", f"Respaldo generado: {_dt.now().isoformat()}\nRepo: {GH_REPO}\n")
+    return buffer.getvalue()
 
 def github_borrar(ruta_repo):
     if not GH_TOKEN or not GH_REPO:
@@ -876,10 +1179,37 @@ def github_borrar(ruta_repo):
 
 def log_uso(texto, lang, via):
     try:
+        area = _detectar_area(texto)
+        modelo = _ultimo_uso.get("modelo") or "desconocido"
+        proveedor = _ultimo_uso.get("proveedor") or "desconocido"
+        exitoso = _ultimo_uso.get("exitoso", False)
+        fallback = _ultimo_uso.get("fallback", False)
+        fue_cache = _ultimo_uso.get("cache", False)
+        fue_memoria = _ultimo_uso.get("memoria", False)
+        tokens_estimados = max(1, len(texto) // 4)
+        costo_estimado = _estimar_precio(modelo, tokens_estimados)
         with open(USO, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"ts": datetime.now().isoformat(), "texto": texto, "lang": lang, "via": via}, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+            f.write(json.dumps({
+                "ts": datetime.now().isoformat(),
+                "texto": texto,
+                "lang": lang,
+                "via": via,
+                "modelo": modelo,
+                "proveedor": proveedor,
+                "exitoso": exitoso,
+                "fallback": fallback,
+                "cache": fue_cache,
+                "memoria": fue_memoria,
+                "area": area,
+                "tokens_estimados": tokens_estimados,
+                "costo_estimado": costo_estimado,
+            }, ensure_ascii=False) + "\n")
+        try:
+            log_ai_usage(modelo, tokens_estimados, costo_estimado, f"{via}:{area}", "")
+        except Exception as e:
+            print(f"Error log_ai_usage: {e}")
+    except Exception as e:
+        print(f"Error log_uso: {e}")
 
 def leer_uso():
     try:
@@ -919,30 +1249,7 @@ def _indexar_archivo_robusto(ruta_archivo, visibilidad="publico"):
 
 
 
-def _indexar_archivo_robusto(ruta_archivo):
-    """Indexa usando subprocess. Confiable pero tarda ~30 seg."""
-    import subprocess
-    import sys as _sys
-    try:
-        print(f"🔄 Re-indexando por nuevo archivo: {ruta_archivo}")
-        result = subprocess.run(
-            [_sys.executable, "indexar_vectorial.py"],
-            cwd=BASE,
-            capture_output=True,
-            text=True,
-            timeout=180
-        )
-        if result.returncode == 0:
-            print(f"✅ Re-indexado exitoso")
-            return True
-        else:
-            print(f"❌ Error: {result.stderr[-500:]}")
-            with open(os.path.join(BASE, "indexado_errores.log"), "a", encoding="utf-8") as f:
-                f.write(f"\n=== {datetime.now()} ===\n{result.stderr}\n")
-            return False
-    except Exception as e:
-        print(f"❌ Excepción: {e}")
-        return False
+
 
 def guardar_aviso(texto, categoria="Avisos", visibilidad="publico", departamento="Otro",
                   responsable_nombre="", responsable_correo=""):
@@ -1039,11 +1346,11 @@ async def api_chat(req: Request):
     d = await req.json()
     st = d.get("state") or {}
     rol = d.get("rol", "externo")
-    if not (st.get("active") or st.get("pending")):
-        log_uso(d.get("msg", ""), d.get("lang", "auto"), "texto")
     try:
         respuesta, lang, state = router(d.get("msg"), d.get("hist"), st, d.get("lang", "auto"), rol)
         audio = await producir_audio(respuesta, lang)
+        if not (st.get("active") or st.get("pending")):
+            log_uso(d.get("msg", ""), lang or d.get("lang", "auto"), "texto")
     except Exception as e:
         respuesta = f"⚠️ Error interno: {type(e).__name__}: {e}"
         audio = None
@@ -1058,10 +1365,10 @@ async def api_voice(audio: UploadFile = File(...), hist: str = Form("[]"), state
     if not texto:
         return {"texto": "", "reply": "⚠️ No logré escuchar bien. Intenta de nuevo más cerca del micrófono.", "audio": None, "state": state, "lang": "es"}
     st = json.loads(state)
-    if not (st.get("active") or st.get("pending")):
-        log_uso(texto, lang, "voz")
     respuesta, lang2, state2 = router(texto, json.loads(hist), st, lang, rol)
     aud = await producir_audio(respuesta, lang2)
+    if not (st.get("active") or st.get("pending")):
+        log_uso(texto, lang2 or lang, "voz")
     return {"texto": texto, "reply": respuesta, "audio": aud, "state": state2, "lang": lang2}
 
 @app.post("/api/voice_note")
@@ -1927,6 +2234,51 @@ async def cache_clear_all():
     except Exception:
         pass
     return {"ok": True, "mensaje": "Caché eliminada. Reinicia el bot para aplicar."}
+@app.get("/api/sistemas/estado")
+async def sistemas_estado(clave: str = ""):
+    if clave != CLAVE_SISTEMAS:
+        return {"error": "Clave incorrecta"}
+    from datetime import datetime as _dt
+    try:
+        total_uso = len(leer_uso())
+    except Exception:
+        total_uso = 0
+    return {
+        "estado": "activo",
+        "version_web_app": "v34",
+        "timestamp": _dt.now().isoformat(),
+        "total_preguntas_registradas": total_uso,
+        "repo_backup": GH_REPO,
+        "cron_respaldo": "diario 3:30 AM",
+        "arquitectura": "FastAPI + Qdrant Cloud + SQLite",
+    }
+
+@app.get("/api/sistemas/respaldo_manual")
+async def sistemas_respaldo_manual(clave: str = ""):
+    if clave != CLAVE_SISTEMAS:
+        return {"error": "Clave incorrecta"}
+    try:
+        subidos = respaldo_github_completo()
+        return {"ok": True, "archivos_subidos": subidos, "mensaje": f"Respaldo subido a GitHub: {subidos} archivos"}
+    except Exception as e:
+        return {"ok": False, "error": f"Error: {e}"}
+
+@app.get("/api/sistemas/respaldo")
+async def sistemas_respaldo(clave: str = ""):
+    if clave != CLAVE_SISTEMAS:
+        return {"error": "Clave incorrecta"}
+    try:
+        zip_bytes = crear_zip_respaldo()
+        from fastapi.responses import Response
+        from datetime import datetime as _dt
+        nombre = f"respaldo_uabc_{_dt.now().strftime('%Y%m%d_%H%M')}.zip"
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={nombre}"},
+        )
+    except Exception as e:
+        return {"error": f"Error generando ZIP: {e}"}
 
 @app.get("/api/vectorial/stats")
 async def vectorial_stats():
