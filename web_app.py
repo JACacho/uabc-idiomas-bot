@@ -308,6 +308,16 @@ def _es_candidato(nombre_modelo):
     n = nombre_modelo.lower()
     return not any(p in n for p in PALABRAS_EXCLUIDAS)
 
+def validar_modelos_chat_sync():
+    """Wrapper síncrono para correr en thread separado."""
+    import asyncio as _asyncio
+    loop = _asyncio.new_event_loop()
+    try:
+        _asyncio.set_event_loop(loop)
+        loop.run_until_complete(validar_modelos_chat())
+    finally:
+        loop.close()
+
 async def validar_modelos_chat():
     global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
     candidatos_or = [m for m in MODELOS_OPENROUTER if _es_candidato(m)][:8]
@@ -402,6 +412,7 @@ def _detectar_area(texto):
     return "Otro"
 
 _ultimo_uso = {}  # Metadata de la última respuesta
+_T_START = time.time()  # Marca de tiempo para medir arranque
 # =====================================================
 
 def detectar_idioma(texto):
@@ -988,7 +999,7 @@ async def _tts_wavenet(texto_limpio, lang):
         creds = service_account.Credentials.from_service_account_file(TTS_CREDENTIALS_PATH)
         client = texttospeech.TextToSpeechClient(credentials=creds)
         voces = {
-            "es": ("es-MX", "es-MX-Wavenet-A"),
+            "es": ("es-US", "es-US-Wavenet-A"),
             "en": ("en-US", "en-US-Wavenet-F"),
             "fr": ("fr-FR", "fr-FR-Wavenet-A"),
         }
@@ -1063,14 +1074,26 @@ app = FastAPI()
 @app.on_event("startup")
 async def startup_event():
     global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
+    print(f"[startup] Iniciando en t={time.time()-_T_START:.2f} seg desde import")
     _setup_tts_credentials()
-    try:
-        restaurar_desde_github()
-    except Exception as e:
-        print(f"[startup] Error restaurando: {e}")
-    await actualizar_modelos()
-    await validar_modelos_chat()
-    print(f"Modelos disponibles: OpenRouter={len(MODELOS_OPENROUTER)}, Groq={len(MODELOS_GROQ)}, Gemini={len(MODELOS_GEMINI)}")
+    # Tareas pesadas en paralelo para no bloquear el arranque
+    async def _bootstrap_pesado():
+        t0 = time.time()
+        print(f"[startup] Bootstrap pesado iniciado en t={t0-_T_START:.2f} seg")
+        try:
+            print("[startup] Restaurando archivos desde GitHub (thread separado)...")
+            await asyncio.to_thread(restaurar_desde_github)
+            print(f"[startup] Restauracion completa en {time.time()-t0:.1f} seg")
+        except Exception as e:
+            print(f"[startup] Error restaurando: {e}")
+        try:
+            await actualizar_modelos()
+            await asyncio.to_thread(validar_modelos_chat_sync)
+            print(f"[startup] Modelos listos en {time.time()-t0:.1f} seg: OpenRouter={len(MODELOS_OPENROUTER)}, Groq={len(MODELOS_GROQ)}, Gemini={len(MODELOS_GEMINI)}")
+            print(f"[startup] ✅ BOOTSTRAP TOTAL COMPLETO en {time.time()-_T_START:.1f} seg")
+        except Exception as e:
+            print(f"[startup] Error validando modelos: {e}")
+    asyncio.create_task(_bootstrap_pesado())
     # Schedule daily update at 3:00 AM
     if not scheduler.running:
         scheduler.add_job(actualizar_modelos, 'cron', hour=3, minute=0)
@@ -1087,9 +1110,9 @@ async def startup_event():
                     await client.get(url, timeout=10.0)
                 except Exception as e:
                     print(f"Keep-alive request failed: {e}")
-                await asyncio.sleep(600)  # 10 minutes
-
+                await asyncio.sleep(600)
     asyncio.create_task(keep_alive_task())
+    print(f"[startup] ⏱️ ARRANQUE VISIBLE en {time.time()-_T_START:.2f} seg (bot ya acepta queries)")
 @app.get("/health")
 async def health():
     return {"status": "ok"}
