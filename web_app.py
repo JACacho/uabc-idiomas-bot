@@ -160,6 +160,47 @@ MESES_ALT = "(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octub
 EXT_IMG = (".png", ".jpg", ".jpeg", ".webp")
 PROMPT_POSTER = "Este es un anuncio o póster institucional. Extrae TODA la información útil (qué evento, quién invita, fecha, hora, lugar, contacto, requisitos) y devuélvela como texto claro en español, sin comentarios."
 IMG_PRUEBA = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+# ============ TTS EN CASCADA (WaveNet → Edge → gTTS) ============
+TTS_CREDENTIALS_PATH = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", os.path.join(tempfile.gettempdir(), "tts_key.json"))
+TTS_MONTHLY_LIMIT = int(os.environ.get("TTS_MONTHLY_LIMIT", "3500000"))
+TTS_COUNTER_FILE = os.path.join(BASE, "tts_counter.json")
+
+def _cargar_tts_counter():
+    try:
+        with open(TTS_COUNTER_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        mes_actual = datetime.now().strftime("%Y-%m")
+        if d.get("mes") != mes_actual:
+            return {"mes": mes_actual, "chars": 0}
+        return d
+    except Exception:
+        return {"mes": datetime.now().strftime("%Y-%m"), "chars": 0}
+
+def _guardar_tts_counter(d):
+    try:
+        with open(TTS_COUNTER_FILE, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+    except Exception:
+        pass
+
+def _wavenet_disponible():
+    c = _cargar_tts_counter()
+    return c.get("chars", 0) < TTS_MONTHLY_LIMIT
+
+def _setup_tts_credentials():
+    """Si existe GOOGLE_CREDS_B64, escribe el JSON a disco al arrancar."""
+    b64 = os.environ.get("GOOGLE_CREDS_B64", "")
+    if b64 and not os.path.exists(TTS_CREDENTIALS_PATH):
+        try:
+            data = base64.b64decode(b64)
+            with open(TTS_CREDENTIALS_PATH, "wb") as f:
+                f.write(data)
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = TTS_CREDENTIALS_PATH
+            print(f"[TTS] Credenciales escritas en {TTS_CREDENTIALS_PATH}")
+        except Exception as e:
+            print(f"[TTS] Error escribiendo credenciales: {e}")
+# ================================================================
+
 
 
 def descubrir_modelos(proveedor, api_key, url):
@@ -937,26 +978,92 @@ def _limpiar_para_tts(texto):
     t = re.sub(r'\s+', ' ', t).strip()
     return t
 
-async def generar_voz(texto, lang):
+async def _tts_wavenet(texto_limpio, lang):
+    """Nivel 1: Google Cloud TTS WaveNet. Retorna ruta o None."""
+    try:
+        from google.cloud import texttospeech
+        from google.oauth2 import service_account
+        if not os.path.exists(TTS_CREDENTIALS_PATH):
+            return None
+        creds = service_account.Credentials.from_service_account_file(TTS_CREDENTIALS_PATH)
+        client = texttospeech.TextToSpeechClient(credentials=creds)
+        voces = {
+            "es": ("es-MX", "es-MX-Wavenet-A"),
+            "en": ("en-US", "en-US-Wavenet-F"),
+            "fr": ("fr-FR", "fr-FR-Wavenet-A"),
+        }
+        lang_code, voice_name = voces.get(lang, voces["es"])
+        synthesis_input = texttospeech.SynthesisInput(text=texto_limpio)
+        voice = texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name)
+        audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+        response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+        ruta = os.path.join(tempfile.gettempdir(), "respuesta_uabc.mp3")
+        with open(ruta, "wb") as f:
+            f.write(response.audio_content)
+        c = _cargar_tts_counter()
+        c["chars"] = c.get("chars", 0) + len(texto_limpio)
+        _guardar_tts_counter(c)
+        print(f"[TTS] WaveNet OK ({len(texto_limpio)} chars, total mes: {c['chars']})")
+        return ruta
+    except Exception as e:
+        print(f"[TTS] WaveNet fallo: {e}")
+        return None
+
+async def _tts_edge(texto_limpio, lang):
+    """Nivel 2: edge-tts (Microsoft). Retorna ruta o None."""
+    try:
+        import edge_tts
+        voces = {
+            "es": "es-MX-DaliaNeural",
+            "en": "en-US-AriaNeural",
+            "fr": "fr-FR-DeniseNeural",
+        }
+        voice = voces.get(lang, voces["es"])
+        ruta = os.path.join(tempfile.gettempdir(), "respuesta_uabc.mp3")
+        communicate = edge_tts.Communicate(texto_limpio, voice)
+        await communicate.save(ruta)
+        if os.path.exists(ruta) and os.path.getsize(ruta) > 0:
+            print(f"[TTS] Edge OK ({len(texto_limpio)} chars)")
+            return ruta
+        return None
+    except Exception as e:
+        print(f"[TTS] Edge fallo: {e}")
+        return None
+
+async def _tts_gtts(texto_limpio, lang):
+    """Nivel 3: gTTS (Google Translate). Último recurso."""
     try:
         from gtts import gTTS
         idioma_gtts = {"es": "es", "en": "en", "fr": "fr"}.get(lang, "es")
-        texto_limpio = _limpiar_para_tts(texto)
-        if not texto_limpio:
-            return None
         ruta = os.path.join(tempfile.gettempdir(), "respuesta_uabc.mp3")
         tts = gTTS(text=texto_limpio, lang=idioma_gtts, slow=False)
         tts.save(ruta)
+        print(f"[TTS] gTTS OK ({len(texto_limpio)} chars)")
         return ruta
     except Exception as e:
-        print(f"[gTTS] Error: {e}")
+        print(f"[TTS] gTTS fallo: {e}")
         return None
+
+async def generar_voz(texto, lang):
+    """Cascada: WaveNet → Edge → gTTS. Nunca falla (gTTS como último recurso)."""
+    texto_limpio = _limpiar_para_tts(texto)
+    if not texto_limpio:
+        return None
+    if _wavenet_disponible():
+        ruta = await _tts_wavenet(texto_limpio, lang)
+        if ruta:
+            return ruta
+    ruta = await _tts_edge(texto_limpio, lang)
+    if ruta:
+        return ruta
+    return await _tts_gtts(texto_limpio, lang)
 
 # ================= SERVICIOS =================
 app = FastAPI()
 @app.on_event("startup")
 async def startup_event():
     global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
+    _setup_tts_credentials()
     try:
         restaurar_desde_github()
     except Exception as e:
