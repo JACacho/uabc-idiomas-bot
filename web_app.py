@@ -207,6 +207,7 @@ def _setup_tts_credentials():
 MODELOS_OPENROUTER = []
 MODELOS_GROQ = []
 MODELOS_GEMINI = []
+MODELOS_VISION_OR = []
 async def actualizar_modelos():
     global MODELOS_OPENROUTER, MODELOS_GROQ, MODELOS_GEMINI
     async with httpx.AsyncClient() as client:
@@ -216,15 +217,20 @@ async def actualizar_modelos():
             if resp.status_code == 200:
                 data = resp.json()
                 modelos = []
+                vision_or = []
                 for m in data.get("data", []):
-                    # Check if free
                     pricing = m.get("pricing", {})
                     if pricing.get("prompt") == "0" and pricing.get("completion") == "0":
-                        # Check tool_use support
                         supported_params = m.get("supported_parameters", [])
                         if "tools" in supported_params:
                             modelos.append(m["id"])
+                        # Detectar si acepta imágenes
+                        mods = m.get("architecture", {}).get("input_modalities", [])
+                        if "image" in mods:
+                            vision_or.append(m["id"])
                 MODELOS_OPENROUTER = modelos
+                global MODELOS_VISION_OR
+                MODELOS_VISION_OR = vision_or
             else:
                 print(f"Error fetching OpenRouter models: {resp.status_code}")
         except Exception as e:
@@ -714,6 +720,9 @@ def llamar_openai(sp, hist, pregunta, url, key, modelos):
             d = r.json()
             t = (d["choices"][0]["message"]["content"] or "").strip()
             if t:
+                _ultimo_uso["modelo"] = modelo
+                _ultimo_uso["proveedor"] = "openrouter" if "openrouter" in url else "groq"
+                _ultimo_uso["exitoso"] = True
                 return t
         except Exception:
             continue
@@ -742,44 +751,74 @@ def llamar_vision(url, key, modelos, b64, mime, prompt):
             continue
     return ""
 
-def _vision_gemini(cliente, data, mime, prompt):
-    if not cliente:
+def _vision_gemini(api_key, data_b64, mime, prompt, modelo):
+    if not api_key:
         return ""
-    for modelo in (MODELOS_GEMINI[:3] if MODELOS_GEMINI else ["gemini-3.8-flash"]):
-        try:
-            r = cliente.models.generate_content(
-                model=modelo,
-                contents=[gtypes.Part(inline_data=gtypes.Blob(data=data, mime_type=mime)), prompt],
-            )
-            t = (r.text or "").strip()
-            if t:
-                return t
-        except Exception:
-            continue
+    try:
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime, "data": data_b64}}
+                ]
+            }]
+        }
+        url = f"{GEMINI_URL}/{modelo}:generateContent?key={api_key}"
+        r = requests.post(url, json=payload, timeout=60)
+        d = r.json()
+        if "candidates" in d and len(d["candidates"]) > 0:
+            t = d["candidates"][0]["content"]["parts"][0]["text"]
+            if t.strip():
+                return t.strip()
+    except Exception:
+        pass
     return ""
 
 def extraer_imagen(data, mime="image/jpeg"):
     errs = []
-    for i, cliente in enumerate((cliente_gemini, cliente_gemini2), 1):
-        t = _vision_gemini(cliente, data, mime, PROMPT_POSTER)
+    b64_data = base64.b64encode(data).decode()
+
+    # 1. Gemini Vision (Forzando modelos que soportan imágenes)
+    modelos_vision = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    for modelo in modelos_vision:
+        t = _vision_gemini(GEMINI_KEY, b64_data, mime, PROMPT_POSTER, modelo)
         if t:
+            _ultimo_uso["modelo"] = modelo
+            _ultimo_uso["proveedor"] = "gemini_vision"
+            _ultimo_uso["exitoso"] = True
             return t, ""
-        errs.append(f"Gemini{i} sin cuota de imagen")
-    b64 = base64.b64encode(data).decode()
-    t = llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"], b64, mime, PROMPT_POSTER)
+        errs.append(f"Gemini {modelo} fallo")
+
+    # 2. Groq Vision
+    t = llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview", "llama-3.2-11b-vision-preview"], b64_data, mime, PROMPT_POSTER)
     if t:
+        _ultimo_uso["modelo"] = "llama-3.2-90b-vision-preview"
+        _ultimo_uso["proveedor"] = "groq_vision"
+        _ultimo_uso["exitoso"] = True
         return t, ""
     errs.append("Groq visión no disponible")
-    t = llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free", "google/gemini-2.0-flash-001", "google/gemini-2.0-flash-exp:free"], b64, mime, PROMPT_POSTER)
-    if t:
-        return t, ""
-    errs.append("OpenRouter visión no disponible")
+
+    # 3. OpenRouter Vision Dinámico
+    if MODELOS_VISION_OR:
+        modelos_or = MODELOS_VISION_OR[:3] # Probamos hasta 3 modelos
+        for modelo_or in modelos_or:
+            t = llamar_vision(OR_URL, OR_KEY, [modelo_or], b64_data, mime, PROMPT_POSTER)
+            if t:
+                _ultimo_uso["modelo"] = modelo_or
+                _ultimo_uso["proveedor"] = "openrouter_vision"
+                _ultimo_uso["exitoso"] = True
+                return t, ""
+        errs.append("OpenRouter falló con todos los modelos")
+    else:
+        errs.append("No hay modelos de visión OpenRouter validados")
+
     return "", " | ".join(errs)
 
 def probar_vision():
     out = {}
-    for i, cliente in enumerate((cliente_gemini, cliente_gemini2), 1):
-        out[f"gemini{i}"] = bool(_vision_gemini(cliente, IMG_PRUEBA, "image/png", "Describe la imagen en una palabra."))
+    b64_prueba = base64.b64encode(IMG_PRUEBA).decode()
+    for i, key in enumerate((GEMINI_KEY, GEMINI_KEY_2), 1):
+        out[f"gemini{i}"] = bool(_vision_gemini(key, b64_prueba, "image/png", "Describe la imagen en una palabra.", "gemini-2.5-flash"))
     b64 = base64.b64encode(IMG_PRUEBA).decode()
     out["groq"] = bool(llamar_vision(GROQ_URL, GROQ_KEY, ["llama-3.2-90b-vision-preview"], b64, "image/png", "Describe la imagen en una palabra."))
     out["openrouter"] = bool(llamar_vision(OR_URL, OR_KEY, ["meta-llama/llama-3.2-90b-vision-instruct:free"], b64, "image/png", "Describe la imagen en una palabra."))
@@ -911,23 +950,37 @@ def transcribir(audio_bytes):
     # 1. Groq (especializado en audio)
     t = transcribir_groq(audio_bytes)
     if t:
+        _ultimo_uso["modelo"] = "whisper-large-v3"
+        _ultimo_uso["proveedor"] = "groq_audio"
+        _ultimo_uso["exitoso"] = True
         return t, detectar_idioma(t)
-    # 2-3. Gemini como respaldo
-    for cliente in (cliente_gemini, cliente_gemini2):
-        if not cliente:
+        
+    # 2. Gemini como respaldo (HTTP)
+    b64_data = base64.b64encode(audio_bytes).decode()
+    for api_key in (GEMINI_KEY, GEMINI_KEY_2):
+        if not api_key:
             continue
         for mime in ("audio/webm", "audio/wav", "audio/mp3"):
             try:
-                r = cliente.models.generate_content(
-                    model=(MODELOS_GEMINI[0] if MODELOS_GEMINI else "gemini-3.8-flash"),
-                    contents=[
-                        gtypes.Part(inline_data=gtypes.Blob(data=audio_bytes, mime_type=mime)),
-                        "Transcribe textalmente este audio. Devuelve solo la transcripción.",
-                    ],
-                )
-                t = (r.text or "").strip()
-                if t:
-                    return t, detectar_idioma(t)
+                payload = {
+                    "contents": [{
+                        "parts": [
+                            {"text": "Transcribe textalmente este audio. Devuelve solo la transcripción."},
+                            {"inline_data": {"mime_type": mime, "data": b64_data}}
+                        ]
+                    }]
+                }
+                modelo_gemini = "gemini-2.5-flash"
+                url = f"{GEMINI_URL}/{modelo_gemini}:generateContent?key={api_key}"
+                r = requests.post(url, json=payload, timeout=60)
+                d = r.json()
+                if "candidates" in d and len(d["candidates"]) > 0:
+                    t = d["candidates"][0]["content"]["parts"][0]["text"]
+                    if t.strip():
+                        _ultimo_uso["modelo"] = modelo_gemini
+                        _ultimo_uso["proveedor"] = "gemini_audio"
+                        _ultimo_uso["exitoso"] = True
+                        return t.strip(), detectar_idioma(t)
             except Exception:
                 continue
     return "", "es"
@@ -1720,12 +1773,8 @@ async def api_test_ia():
         test_model_gemini = "gemini-3.8-flash"
     if test_model_gemini and GEMINI_KEY:
         try:
-            cliente = _mk_client(GEMINI_KEY)
-            if cliente:
-                texto = llamar_gemini(cliente, "System: Test", [], "Di solo la palabra: listo", test_model_gemini)
-                results["gemini"] = {"modelo": test_model_gemini, "respuesta": texto[:100] if texto else None, "error": None}
-            else:
-                results["gemini"] = {"modelo": test_model_gemini, "respuesta": None, "error": "Failed to create client"}
+            texto = llamar_gemini(GEMINI_KEY, "System: Test", [], "Di solo la palabra: listo", test_model_gemini)
+            results["gemini"] = {"modelo": test_model_gemini, "respuesta": texto[:100] if texto else None, "error": None}
         except Exception as e:
             results["gemini"] = {"modelo": test_model_gemini, "respuesta": None, "error": str(e)}
     else:
