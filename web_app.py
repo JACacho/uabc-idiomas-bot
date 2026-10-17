@@ -510,9 +510,10 @@ def _tokens(t):
 def _es_valida(t):
     if not t:
         return False
-    if t.strip().endswith("?") and len(t) < 160:
-        return False
+    # Se eliminó la regla que rechazaba respuestas cortas con "?" 
+    # porque bloqueaba saludos y preguntas de clarificación válidas.
     return True
+
 
 def _es_interno_doc(fn):
     low = fn.lower()
