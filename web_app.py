@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 import uvicorn
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import httpx
-import chromadb
+
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue, MatchAny
 
@@ -203,46 +203,6 @@ def _setup_tts_credentials():
 
 
 
-def descubrir_modelos(proveedor, api_key, url):
-    if not api_key:
-        return []
-    try:
-        if proveedor == "openrouter":
-            headers = {"Authorization": f"Bearer {api_key}"}
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                # Assuming the response has a 'data' field with list of models, each having 'id'
-                return [m["id"] for m in data.get("data", [])]
-        elif proveedor == "groq":
-            headers = {"Authorization": f"Bearer {api_key}"}
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                return [m["id"] for m in data.get("data", [])]
-        elif proveedor == "gemini":
-            # For Gemini, the URL should be: https://generativelanguage.googleapis.com/v1beta/models?key={api_key}
-            resp = requests.get(f"{url}?key={api_key}", timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                models = []
-                for m in data.get("models", []):
-                    # Check if the model supports generateContent
-                    if "generateContent" in m.get("supportedGenerationMethods", []):
-                        # The model name is like "models/gemini-1.5-pro"
-                        # We want to strip the "models/" prefix? The llamar_gemini function expects without?
-                        # Looking at the current hardcoded model: "gemini-3.8-flash"
-                        # So we remove the "models/" prefix.
-                        model_name = m["name"]
-                        if model_name.startswith("models/"):
-                            model_name = model_name[7:]
-                        models.append(model_name)
-                return models
-        else:
-            return []
-    except Exception as e:
-        print(f"Error discovering models for {proveedor}: {e}")
-        return []
 
 MODELOS_OPENROUTER = []
 MODELOS_GROQ = []
@@ -345,11 +305,9 @@ async def validar_modelos_chat():
     validos_gem = []
     for m in candidatos_gem:
         try:
-            c = _mk_client(GEMINI_KEY)
-            if c:
-                r = llamar_gemini(c, "Test", [], "Di solo: listo", m)
-                if r and len(r) < 200:
-                    validos_gem.append(m)
+            r = llamar_gemini(GEMINI_KEY, "Test", [], "Di solo: listo", m)
+            if r and len(r) < 200:
+                validos_gem.append(m)
         except Exception:
             pass
 
@@ -655,6 +613,7 @@ def cargar_contexto(pregunta, rol="externo"):
             )
             fragmentos = results.get("documents", [[]])[0]
             fragmentos = [f for f in fragmentos if not _tiene_fecha_pasada(f)]
+            fragmentos = list(dict.fromkeys(fragmentos))  # Eliminar duplicados exactos
             # Si la pregunta menciona "hoy", "mañana" o "esta semana", añadir avisos recientes al inicio
             pregunta_lower = (pregunta or "").lower()
             if any(k in pregunta_lower for k in ["hoy", "mañana", "manana", "esta semana", "proxim"]):
@@ -682,7 +641,8 @@ def respuesta_de_documentos(pregunta, rol="externo"):
     horizonte = hoy + timedelta(days=14)
     p = (pregunta or "").lower()
     if any(k in p for k in ("semana", "evento", "hoy", "mañana", "pronto", "avisos", "hay")):
-        frescos = [t for t in docs.values() if any(hoy <= f <= horizonte for f in _fechas_doc(t))][:2]
+        frescos = [t for t in docs.values() if any(hoy <= f <= horizonte for f in _fechas_doc(t))]
+        frescos = list(dict.fromkeys(frescos))[:2]  # Eliminar duplicados antes de cortar a 2
         if frescos:
             return "📅 Según los avisos oficiales más recientes de la Facultad:\n\n" + "\n\n".join(t[:500] for t in frescos)
     qt = _tokens(pregunta)
@@ -711,28 +671,32 @@ def sistema_prompt(contexto, rol="externo"):
         f"\nINFORMACIÓN DISPONIBLE:\n{contexto}"
     )
 
-def llamar_gemini(cliente, sp, hist, pregunta, modelo):
-    if not cliente:
+def llamar_gemini(api_key, sp, hist, pregunta, modelo):
+    if not api_key:
         return None
     try:
         contents = []
         for m in hist:
             contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
         contents.append({"role": "user", "parts": [{"text": pregunta}]})
-        r = cliente.models.generate_content(
-            model=modelo,
-            contents=contents,
-            config={"system_instruction": sp, "temperature": 0.1},
-        )
-        if (r.text or "").strip():
-            _ultimo_uso["modelo"] = modelo
-            _ultimo_uso["proveedor"] = "gemini"
-            _ultimo_uso["exitoso"] = True
-        return (r.text or "").strip() or None
+        payload = {
+            "system_instruction": {"parts": [{"text": sp}]},
+            "contents": contents,
+            "generationConfig": {"temperature": 0.1}
+        }
+        url = f"{GEMINI_URL}/{modelo}:generateContent?key={api_key}"
+        r = requests.post(url, json=payload, timeout=30)
+        d = r.json()
+        if "candidates" in d and len(d["candidates"]) > 0:
+            t = d["candidates"][0]["content"]["parts"][0]["text"]
+            if t.strip():
+                _ultimo_uso["modelo"] = modelo
+                _ultimo_uso["proveedor"] = "gemini"
+                _ultimo_uso["exitoso"] = True
+                return t.strip()
+        return None
     except Exception as e:
-        err_str = str(e)
-        if "404" not in err_str and "503" not in err_str:
-            print(f"Error Gemini: {err_str}")
+        print(f"Error Gemini HTTP: {e}")
         return None
 
 def llamar_openai(sp, hist, pregunta, url, key, modelos):
@@ -886,15 +850,15 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
             hist.append({"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]})    # Dynamic model selection with fallback per provider
     texto = None
     # 1. Gemini 1
-    if not _es_valida(texto) and MODELOS_GEMINI and cliente_gemini:
+    if not _es_valida(texto) and MODELOS_GEMINI and GEMINI_KEY:
         for modelo in MODELOS_GEMINI[:2]:
-            texto = llamar_gemini(cliente_gemini, sp, hist, pregunta_final, modelo)
+            texto = llamar_gemini(GEMINI_KEY, sp, hist, pregunta_final, modelo)
             if _es_valida(texto):
                 break
     # 2. Gemini 2
-    if not _es_valida(texto) and MODELOS_GEMINI and cliente_gemini2:
+    if not _es_valida(texto) and MODELOS_GEMINI and GEMINI_KEY_2:
         for modelo in MODELOS_GEMINI[:2]:
-            texto = llamar_gemini(cliente_gemini2, sp, hist, pregunta_final, modelo)
+            texto = llamar_gemini(GEMINI_KEY_2, sp, hist, pregunta_final, modelo)
             if _es_valida(texto):
                 break
     # 3. OpenRouter (rota por TODAS las keys)
@@ -909,6 +873,9 @@ def responder(pregunta, historial, lang_pref="auto", rol="externo"):
         if groq_models:
             texto = llamar_openai(sp, hist, pregunta_final, GROQ_URL, GROQ_KEY, groq_models)
 
+    # Si aún no hay modelos validados (arranque en frío), avisar al usuario
+    if not _es_valida(texto) and not MODELOS_GEMINI and not MODELOS_OPENROUTER and not MODELOS_GROQ:
+        return "⏳ El sistema está iniciando y cargando los modelos de IA. Por favor, espera 1 o 2 minutos e intenta de nuevo.", lang
     # If still not valid, fallback to document response
     if not _es_valida(texto):
         fb = respuesta_de_documentos(pregunta, rol)
@@ -983,7 +950,8 @@ def _limpiar_para_tts(texto):
     t = re.sub(r'^\s*[-*+]\s+', '', t, flags=re.MULTILINE)
     t = re.sub(r'^\s*\d+\.\s+', '', t, flags=re.MULTILINE)
     # Quitar emojis
-    t = re.sub(r'[\U0001F300-\U0001F9FF\u2600-\u27BF]', '', t)
+    t = re.sub(r'[\U0001F000-\U0001FAFF\u2300-\u23FF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]', '', t)
+    t = t.replace('⚠️', '').replace('⏳', '').replace('⌛', '').replace('🚩', '')
     # Quitar URLs
     t = re.sub(r'https?://\S+', ' ', t)
     # Quitar múltiples espacios/saltos

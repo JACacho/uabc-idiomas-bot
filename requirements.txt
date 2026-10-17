@@ -15,7 +15,7 @@ edge-tts
 gTTS
 duckduckgo-search
 qdrant-client
-chromadb
+
 sentence-transformers
 optimum
 onnxruntime
